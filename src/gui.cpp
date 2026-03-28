@@ -258,7 +258,13 @@ void GUI::startEngineMove() {
         uciMoves.push_back(Board::moveToUCI(mr.move));
     }
 
-    std::string fen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1";
+    // 使用初始 FEN 或编辑后的棋盘 FEN
+    std::string fen;
+    if (m_moveHistory.empty()) {
+        fen = m_board.toFEN();
+    } else {
+        fen = m_moveHistory.front().fenBefore;
+    }
     m_engine.sendPosition(fen, uciMoves);
 
     if (m_settings.searchTime > 0)
@@ -902,6 +908,12 @@ void GUI::handleMouseDown(int x, int y) {
             } else if (hit == 17) {
                 exitEditMode();
                 return;
+            } else if (hit == 18) {
+                m_editFirstSide = Side::RED;
+                return;
+            } else if (hit == 19) {
+                m_editFirstSide = Side::BLACK;
+                return;
             }
         }
         // 棋盘点击：放置棋子
@@ -1133,7 +1145,7 @@ void GUI::render() {
 
     // 侧边信息栏 或 编辑面板
     if (m_uiState == UIState::EDITING) {
-        m_renderer.drawEditPalette(m_editPiece);
+        m_renderer.drawEditPalette(m_editPiece, m_editFirstSide);
     } else {
         std::lock_guard<std::mutex> lock(m_infoMutex);
         m_renderer.drawSidePanel(m_engine.getEngineName(), m_engineInfoText,
@@ -1141,8 +1153,8 @@ void GUI::render() {
                                   m_engine.isThinking());
     }
 
-    // 棋谱列表
-    {
+    // 棋谱列表（编辑模式下不显示）
+    if (m_uiState != UIState::EDITING) {
         auto lay = m_renderer.calcPanelLayout();
         std::vector<Renderer::MoveListEntry> entries;
         for (size_t i = 0; i < m_moveHistory.size(); i += 2) {
@@ -1157,8 +1169,10 @@ void GUI::render() {
         m_renderer.drawMoveList(entries, m_moveListScroll, hl, lay.moveListTop, lay.moveListHeight);
     }
 
-    // 按钮
-    m_renderer.drawButtons(m_buttons);
+    // 按钮（编辑模式下不显示）
+    if (m_uiState != UIState::EDITING) {
+        m_renderer.drawButtons(m_buttons);
+    }
 
     // 计时器面板（棋盘左侧）
     {
@@ -1443,6 +1457,132 @@ void GUI::enterEditMode() {
 }
 
 void GUI::exitEditMode() {
+    // ---- 局面合法性检查 ----
+
+    // 仕/士合法位置
+    auto validAdvisor = [](int r, int c, Side s) -> bool {
+        if (s == Side::RED) {
+            return (r==0&&c==3)||(r==0&&c==5)||(r==1&&c==4)||(r==2&&c==3)||(r==2&&c==5);
+        } else {
+            return (r==7&&c==3)||(r==7&&c==5)||(r==8&&c==4)||(r==9&&c==3)||(r==9&&c==5);
+        }
+    };
+    // 相/象合法位置
+    auto validBishop = [](int r, int c, Side s) -> bool {
+        if (s == Side::RED) {
+            return (r==0&&c==2)||(r==0&&c==6)||(r==2&&c==0)||(r==2&&c==4)||(r==2&&c==8)
+                 ||(r==4&&c==2)||(r==4&&c==6);
+        } else {
+            return (r==5&&c==2)||(r==5&&c==6)||(r==7&&c==0)||(r==7&&c==4)||(r==7&&c==8)
+                 ||(r==9&&c==2)||(r==9&&c==6);
+        }
+    };
+    // 兵/卒合法范围：红兵 row>=3，黑卒 row<=6
+    auto validPawn = [](int r, Side s) -> bool {
+        return s == Side::RED ? r >= 3 : r <= 6;
+    };
+    // 九宫格
+    auto validPalace = [](int r, int c, Side s) -> bool {
+        if (c < 3 || c > 5) return false;
+        return s == Side::RED ? (r >= 0 && r <= 2) : (r >= 7 && r <= 9);
+    };
+
+    // 各类棋子数量上限 (KING=1, ADVISOR=2, BISHOP=2, KNIGHT=2, ROOK=2, CANNON=2, PAWN=5)
+    auto maxCount = [](PieceType t) -> int {
+        switch (t) {
+            case PieceType::KING: return 1;
+            case PieceType::ADVISOR: case PieceType::BISHOP:
+            case PieceType::KNIGHT:  case PieceType::ROOK:
+            case PieceType::CANNON:  return 2;
+            case PieceType::PAWN:    return 5;
+            default: return 0;
+        }
+    };
+    auto pieceName = [](PieceType t, Side s) -> std::string {
+        if (s == Side::RED) {
+            switch (t) {
+                case PieceType::KING: return "帅";  case PieceType::ADVISOR: return "仕";
+                case PieceType::BISHOP: return "相"; case PieceType::KNIGHT: return "马";
+                case PieceType::ROOK: return "车";   case PieceType::CANNON: return "炮";
+                case PieceType::PAWN: return "兵";   default: return "?";
+            }
+        } else {
+            switch (t) {
+                case PieceType::KING: return "将";  case PieceType::ADVISOR: return "士";
+                case PieceType::BISHOP: return "象"; case PieceType::KNIGHT: return "马";
+                case PieceType::ROOK: return "车";   case PieceType::CANNON: return "炮";
+                case PieceType::PAWN: return "卒";   default: return "?";
+            }
+        }
+    };
+
+    // 统计棋子数量
+    int count[2][8] = {}; // [side-1][type]
+    for (int r = 0; r < Board::ROWS; r++) {
+        for (int c = 0; c < Board::COLS; c++) {
+            Piece p = m_board.get(r, c);
+            if (p.empty()) continue;
+            int si = (int)p.side - 1; // 0=RED, 1=BLACK
+            count[si][(int)p.type]++;
+
+            // 位置合法性
+            std::string err;
+            switch (p.type) {
+                case PieceType::KING:
+                    if (!validPalace(r, c, p.side))
+                        err = pieceName(p.type, p.side) + "必须在九宫格内";
+                    break;
+                case PieceType::ADVISOR:
+                    if (!validAdvisor(r, c, p.side))
+                        err = pieceName(p.type, p.side) + "位置不合法(须在九宫对角线)";
+                    break;
+                case PieceType::BISHOP:
+                    if (!validBishop(r, c, p.side))
+                        err = pieceName(p.type, p.side) + "位置不合法(须在己方田字格)";
+                    break;
+                case PieceType::PAWN:
+                    if (!validPawn(r, p.side))
+                        err = pieceName(p.type, p.side) + "不能在己方底线区域";
+                    break;
+                default: break;
+            }
+            if (!err.empty()) {
+                m_message = "局面非法: " + err;
+                m_messageTime = SDL_GetTicks();
+                return;
+            }
+        }
+    }
+
+    // 检查棋子数量
+    for (int si = 0; si < 2; si++) {
+        Side s = si == 0 ? Side::RED : Side::BLACK;
+        for (int t = (int)PieceType::KING; t <= (int)PieceType::PAWN; t++) {
+            PieceType pt = (PieceType)t;
+            if (count[si][t] > maxCount(pt)) {
+                m_message = "局面非法: " + std::string(s==Side::RED?"红":"黑") + "方"
+                    + pieceName(pt, s) + "数量超限(最多" + std::to_string(maxCount(pt)) + "个)";
+                m_messageTime = SDL_GetTicks();
+                return;
+            }
+        }
+    }
+
+    // 双方各有且仅有一个将/帅
+    if (count[0][(int)PieceType::KING] != 1 || count[1][(int)PieceType::KING] != 1) {
+        m_message = "局面非法: 双方必须各有且仅有一个将/帅!";
+        m_messageTime = SDL_GetTicks();
+        return;
+    }
+    if (m_board.kingsOpposing()) {
+        m_message = "局面非法: 双将对脸 (同一列中间无棋子)!";
+        m_messageTime = SDL_GetTicks();
+        return;
+    }
+
+    // 设置先行方
+    m_board.setCurrentSide(m_editFirstSide);
+
     m_uiState = UIState::NORMAL;
     m_editPiece = {};
     m_moveHistory.clear();
@@ -1452,7 +1592,7 @@ void GUI::exitEditMode() {
     m_redTimer = {};
     m_blackTimer = {};
     startMoveTimer();
-    m_message = "编辑完成，开始新局面";
+    m_message = "编辑完成，" + std::string(m_editFirstSide == Side::RED ? "红" : "黑") + "方先行";
     m_messageTime = SDL_GetTicks();
     // 通知引擎新局
     if (m_engine.isRunning()) {

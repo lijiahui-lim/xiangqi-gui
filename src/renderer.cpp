@@ -872,7 +872,7 @@ static const PieceType kPaletteTypes[] = {
     PieceType::KNIGHT, PieceType::ROOK, PieceType::CANNON, PieceType::PAWN
 };
 
-void Renderer::drawEditPalette(const Piece& selected)
+void Renderer::drawEditPalette(const Piece& selected, Side firstSide)
 {
     auto lay = calcPanelLayout();
     int px = m_panelLeft;
@@ -974,6 +974,42 @@ void Renderer::drawEditPalette(const Piece& selected)
     drawBtn(m_editDoneRect,  "完成");
     py += bh + 8;
 
+    // 先行方选择：红先 / 黑先
+    int labelW = 0;
+    if (m_fontPanel) {
+        int tw = 0, th = 0;
+        TTF_SizeUTF8(m_fontPanel, "先行:", &tw, &th);
+        labelW = tw + 4;
+        drawText("先行:", px, py + (bh - th) / 2, gray, m_fontPanel);
+    }
+    int btnW2  = std::max(50, (pw - labelW - gap) / 2);
+    m_editRedFirstRect   = {px + labelW,               py, btnW2, bh};
+    m_editBlackFirstRect = {px + labelW + btnW2 + gap,  py, btnW2, bh};
+
+    // 红先按钮
+    {
+        bool active = (firstSide == Side::RED);
+        SDL_Rect r = m_editRedFirstRect;
+        SDL_SetRenderDrawColor(m_renderer, active ? 160 : 70, active ? 40 : 66, active ? 40 : 62, 255);
+        SDL_RenderFillRect(m_renderer, &r);
+        SDL_SetRenderDrawColor(m_renderer, active ? 220 : 120, active ? 80 : 116, active ? 80 : 112, 255);
+        SDL_RenderDrawRect(m_renderer, &r);
+        SDL_Color tc = active ? SDL_Color{255,200,200,255} : SDL_Color{180,180,180,255};
+        if (m_fontPanel) drawTextCentered("红先", r.x + r.w/2, r.y + r.h/2, tc, m_fontPanel);
+    }
+    // 黑先按钮
+    {
+        bool active = (firstSide == Side::BLACK);
+        SDL_Rect r = m_editBlackFirstRect;
+        SDL_SetRenderDrawColor(m_renderer, active ? 50 : 70, active ? 50 : 66, active ? 50 : 62, 255);
+        SDL_RenderFillRect(m_renderer, &r);
+        SDL_SetRenderDrawColor(m_renderer, active ? 140 : 120, active ? 140 : 116, active ? 140 : 112, 255);
+        SDL_RenderDrawRect(m_renderer, &r);
+        SDL_Color tc = active ? SDL_Color{220,220,255,255} : SDL_Color{180,180,180,255};
+        if (m_fontPanel) drawTextCentered("黑先", r.x + r.w/2, r.y + r.h/2, tc, m_fontPanel);
+    }
+    py += bh + 8;
+
     // 提示文字
     if (m_fontPanel) {
         drawText("左键:放置  右键:删除", px, py, gray, m_fontPanel);
@@ -998,5 +1034,7 @@ int Renderer::editPaletteHitTest(int x, int y) const
     if (SDL_PointInRect(&p, &m_editClearRect)) return 15;
     if (SDL_PointInRect(&p, &m_editResetRect)) return 16;
     if (SDL_PointInRect(&p, &m_editDoneRect))  return 17;
+    if (SDL_PointInRect(&p, &m_editRedFirstRect))   return 18;
+    if (SDL_PointInRect(&p, &m_editBlackFirstRect)) return 19;
     return -1;
 }

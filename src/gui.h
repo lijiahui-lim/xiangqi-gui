@@ -180,6 +180,7 @@ private:
 
     // ---- 棋局编辑 ----
     Piece m_editPiece;  // 当前要放置的棋子（empty = 橡皮擦）
+    Side  m_editFirstSide = Side::RED;  // 编辑完成后的先行方
     void enterEditMode();
     void exitEditMode();
     void handleEditBoardClick(int row, int col, bool erase); // 放/删棋子
