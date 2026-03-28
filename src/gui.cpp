@@ -986,6 +986,15 @@ void GUI::handleMouseMove(int x, int y) {
 
 void GUI::handleKeyDown(SDL_Keycode key) {
     switch (key) {
+        case SDLK_F11: {
+            SDL_Window* win = m_renderer.window();
+            Uint32 flags = SDL_GetWindowFlags(win);
+            if (flags & SDL_WINDOW_FULLSCREEN_DESKTOP)
+                SDL_SetWindowFullscreen(win, 0);
+            else
+                SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            break;
+        }
         case SDLK_n: newGame(); break;
         case SDLK_u: undoLastMove(); break;
         case SDLK_f: m_settings.flipBoard = !m_settings.flipBoard; break;

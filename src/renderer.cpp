@@ -15,7 +15,7 @@ bool Renderer::init(int windowW, int windowH) {
 
     m_window = SDL_CreateWindow("中国象棋 - 皮卡鱼引擎",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        windowW, windowH, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+        windowW, windowH, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
     if (!m_window) return false;
 
     m_renderer = SDL_CreateRenderer(m_window, -1,
