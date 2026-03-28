@@ -4,6 +4,7 @@
 #include <functional>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 struct CloudBookMove {
     std::string move;   // UCI格式
@@ -17,7 +18,7 @@ struct CloudBookMove {
 
 class CloudBook {
 public:
-    using Callback = std::function<void(const std::vector<CloudBookMove>&)>;
+    using Callback = std::function<void(const std::vector<CloudBookMove>&, const std::string& error)>;
 
     CloudBook();
     ~CloudBook();
@@ -31,6 +32,7 @@ public:
     bool isEnabled() const { return m_enabled; }
 
 private:
+
     std::atomic<bool> m_querying{false};
     std::atomic<bool> m_cancel{false};
     std::atomic<bool> m_enabled{true};

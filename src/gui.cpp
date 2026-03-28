@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <sstream>
 #include <filesystem>
-#include <fstream>
 #include <cstdio>
 #include <iostream>
 #include <cmath>
@@ -150,7 +149,7 @@ void GUI::initButtons() {
     by -= bh + gap;
     // 第3行：设置 / 云库 / 停止
     m_buttons.push_back({{px, by, bw, bh}, "设置", false});              // 6
-    m_buttons.push_back({{px + bw + gap, by, bw, bh}, "云库", false});   // 7
+    m_buttons.push_back({{px + bw + gap, by, bw, bh}, m_settings.useCloudBook ? "★云库" : "☆云库", false});   // 7
     m_buttons.push_back({{px + (bw + gap) * 2, by, bw, bh}, "停止", false}); // 8
     by -= bh + gap;
     // 第4行：分析 / 加载引擎
@@ -216,9 +215,9 @@ void GUI::newGame() {
     }
 
     // 查询云库
-    if (m_settings.useCloudBook) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves) {
-            onCloudBookResult(moves);
+    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
+        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            onCloudBookResult(moves, error);
         });
     }
 }
@@ -395,9 +394,9 @@ void GUI::onEngineBestMove(const std::string& uci) {
     if (!checkGameRules()) return;
 
     // 查询云库
-    if (m_settings.useCloudBook) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves) {
-            onCloudBookResult(moves);
+    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
+        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            onCloudBookResult(moves, error);
         });
     }
 
@@ -471,9 +470,15 @@ std::string GUI::pvToReadable(const std::string& pv) const {
     return result;
 }
 
-void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves) {
+void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error) {
     std::lock_guard<std::mutex> lock(m_infoMutex);
+    if (!error.empty()) {
+        m_cloudErrorText = error;
+        m_cloudMoves.clear();
+        return;
+    }
     m_cloudMoves = moves;
+    m_cloudErrorText.clear();
     // 把UCI走法转换为中文记法存入note字段
     for (auto& cm : m_cloudMoves) {
         cm.note = uciToChineseNotation(cm.move, m_board);
@@ -522,9 +527,9 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
     if (!checkGameRules()) return;
 
     // 云库查询
-    if (m_settings.useCloudBook) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves) {
-            onCloudBookResult(moves);
+    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
+        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            onCloudBookResult(moves, error);
         });
     }
 
@@ -646,9 +651,9 @@ void GUI::undoLastMove() {
         m_uiState = UIState::NORMAL;
 
     // 查询云库
-    if (m_settings.useCloudBook) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves) {
-            onCloudBookResult(moves);
+    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
+        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            onCloudBookResult(moves, error);
         });
     }
 
@@ -940,14 +945,16 @@ void GUI::handleMouseDown(int x, int y) {
             case 7: // 云库
                 m_settings.useCloudBook = !m_settings.useCloudBook;
                 m_cloudBook.setEnabled(m_settings.useCloudBook);
+                initButtons(); // 刷新按钮文字
                 if (m_settings.useCloudBook) {
-                    m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves) {
-                        onCloudBookResult(moves);
+                    m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
+                        onCloudBookResult(moves, error);
                     });
                     m_message = "云库已开启";
                 } else {
                     m_message = "云库已关闭";
                     m_cloudMoves.clear();
+                    m_cloudErrorText.clear();
                 }
                 m_messageTime = SDL_GetTicks();
                 break;
@@ -1290,7 +1297,7 @@ void GUI::render() {
     } else {
         std::lock_guard<std::mutex> lock(m_infoMutex);
         m_renderer.drawSidePanel(m_engine.getEngineName(), m_engineInfoText,
-                                  m_cloudMoves, dispBoard.currentSide(),
+                                  m_cloudMoves, m_cloudErrorText, dispBoard.currentSide(),
                                   m_engine.isThinking());
     }
 

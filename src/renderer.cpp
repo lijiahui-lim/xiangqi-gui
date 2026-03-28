@@ -440,6 +440,7 @@ void Renderer::drawPVArrow(const Move& move, Side side, bool active, bool flippe
 
 void Renderer::drawSidePanel(const std::string& engineName, const std::string& infoText,
                               const std::vector<CloudBookMove>& cloudMoves,
+                              const std::string& cloudErrorText,
                               Side currentSide, bool engineThinking) {
     int px = m_panelLeft;
     int pw = m_windowW - px - 15;
@@ -507,7 +508,9 @@ void Renderer::drawSidePanel(const std::string& engineName, const std::string& i
         drawText("云库走法:", px, py, yellow, m_fontSmall);
         py += lineH + 2;
 
-        if (cloudMoves.empty()) {
+        if (!cloudErrorText.empty()) {
+            drawText(cloudErrorText, px + 5, py, SDL_Color{255, 120, 120, 255}, m_fontSmall);
+        } else if (cloudMoves.empty()) {
             drawText("无云库数据", px + 5, py, gray, m_fontSmall);
         } else {
             int count = 0;

@@ -41,6 +41,7 @@ public:
     // 侧边栏信息
     void drawSidePanel(const std::string& engineName, const std::string& infoText,
                        const std::vector<CloudBookMove>& cloudMoves,
+                       const std::string& cloudErrorText,
                        Side currentSide, bool engineThinking);
 
     // 按钮

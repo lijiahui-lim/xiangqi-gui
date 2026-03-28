@@ -69,7 +69,7 @@ private:
     void toggleAnalysisMode();    // 切换分析模式
     void onEngineBestMove(const std::string& uci);
     void onEngineInfo(const EngineInfo& info);
-    void onCloudBookResult(const std::vector<CloudBookMove>& moves);
+    void onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error);
     void undoLastMove();
     bool isEngineTurn() const;
 
@@ -122,6 +122,7 @@ private:
     // 引擎信息
     std::string m_engineInfoText;
     std::vector<CloudBookMove> m_cloudMoves;
+    std::string m_cloudErrorText;
     std::mutex m_infoMutex;
 
     // 走法历史 (用于悔棋)

@@ -70,11 +70,13 @@ void CloudBook::query(const std::string& fen, Callback cb) {
 
     m_thread = std::thread([this, fen, cb]() {
         std::vector<CloudBookMove> results;
+        std::string error;
 
         CURL* curl = curl_easy_init();
         if (!curl) {
+            error = "云库初始化失败";
             m_querying = false;
-            if (cb) cb(results);
+            if (cb) cb(results, error);
             return;
         }
 
@@ -94,6 +96,13 @@ void CloudBook::query(const std::string& fen, Callback cb) {
 
         CURLcode res = curl_easy_perform(curl);
         curl_easy_cleanup(curl);
+
+        if (res != CURLE_OK)
+            error = std::string("Error: ") + curl_easy_strerror(res);
+        else if (response.empty())
+            error = "云库返回为空";
+        else if (response.find("move:") == std::string::npos)
+            error = response;
 
         if (res == CURLE_OK && !m_cancel && !response.empty() && response[0] != 'u') {
             // chessdb 返回格式: move:h2e2,score:36,rank:2,note:...|move:b0c2,...
@@ -122,10 +131,14 @@ void CloudBook::query(const std::string& fen, Callback cb) {
                 if (!cbm.move.empty())
                     results.push_back(cbm);
             }
+            // 仅当解析到有效招法时清空错误；否则保留上面的返回文本错误。
+            if (!results.empty()) {
+                error.clear();
+            }
         }
 
         m_querying = false;
-        if (!m_cancel && cb) cb(results);
+        if (!m_cancel && cb) cb(results, error);
     });
 
     if (m_thread.joinable()) m_thread.detach();
