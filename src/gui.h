@@ -65,6 +65,8 @@ private:
     void makeHumanMove(int fromR, int fromC, int toR, int toC);
     void startEngineMove();
     void tryStartEngineMove(); // 如果轮到引擎走，启动引擎
+    void startAnalysis();         // 分析模式：无限分析当前局面
+    void toggleAnalysisMode();    // 切换分析模式
     void onEngineBestMove(const std::string& uci);
     void onEngineInfo(const EngineInfo& info);
     void onCloudBookResult(const std::vector<CloudBookMove>& moves);
@@ -100,6 +102,16 @@ private:
     GameMode m_gameMode = GameMode::HUMAN_VS_ENGINE;
     UIState m_uiState = UIState::NORMAL;
     GameSettings m_settings;
+    bool m_analysisMode = false;      // 分析模式
+    bool m_ignoreNextBestMove = false;  // 忽略停止分析时产生的bestmove
+
+    // PV 箭头（引擎最佳着法路线前两步）
+    struct PVArrow {
+        bool valid = false;
+        Move move;
+        Side side = Side::RED;
+    };
+    PVArrow m_pvArrow1, m_pvArrow2;  // 当前方 & 对方预期应手
 
     // 选子状态
     int m_selRow = -1, m_selCol = -1;

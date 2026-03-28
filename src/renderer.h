@@ -34,6 +34,10 @@ public:
     void drawLegalMoves(const std::vector<Move>& moves, bool flipped, bool mirrored = false);
     void drawLastMove(const Move& move, bool flipped, bool mirrored = false);
 
+    // PV 走法箭头（分析/引擎思考时）
+    // active=true 时颜色加深，false 时半透明
+    void drawPVArrow(const Move& move, Side side, bool active, bool flipped, bool mirrored = false);
+
     // 侧边栏信息
     void drawSidePanel(const std::string& engineName, const std::string& infoText,
                        const std::vector<CloudBookMove>& cloudMoves,

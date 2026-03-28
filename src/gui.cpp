@@ -153,21 +153,22 @@ void GUI::initButtons() {
     m_buttons.push_back({{px + bw + gap, by, bw, bh}, "云库", false});   // 7
     m_buttons.push_back({{px + (bw + gap) * 2, by, bw, bh}, "停止", false}); // 8
     by -= bh + gap;
-    // 第4行：加载引擎
-    m_buttons.push_back({{px, by, pw, bh}, "加载引擎...", false}); // 9
+    // 第4行：分析 / 加载引擎
+    m_buttons.push_back({{px, by, bw, bh}, m_analysisMode ? "★分析" : "☆分析", false}); // 9
+    m_buttons.push_back({{px + bw + gap, by, bw * 2 + gap, bh}, "加载引擎...", false}); // 10
     by -= bh + gap;
     // 第5行：棋谱导航 |< < > >|
     int navBw = std::max(30, (pw - gap * 3) / 4);
-    m_buttons.push_back({{px, by, navBw, bh}, "|<", false});                        // 10
-    m_buttons.push_back({{px + (navBw + gap), by, navBw, bh}, "<", false});         // 11
-    m_buttons.push_back({{px + (navBw + gap) * 2, by, navBw, bh}, ">", false});     // 12
-    m_buttons.push_back({{px + (navBw + gap) * 3, by, navBw, bh}, ">|", false});   // 13
+    m_buttons.push_back({{px, by, navBw, bh}, "|<", false});                        // 11
+    m_buttons.push_back({{px + (navBw + gap), by, navBw, bh}, "<", false});         // 12
+    m_buttons.push_back({{px + (navBw + gap) * 2, by, navBw, bh}, ">", false});     // 13
+    m_buttons.push_back({{px + (navBw + gap) * 3, by, navBw, bh}, ">|", false});   // 14
     by -= bh + gap;
     // 第6行：导出 / 导入棋谱 / 编辑
     int pgnBw = std::max(40, (pw - gap * 2) / 3);
-    m_buttons.push_back({{px, by, pgnBw, bh}, "导出棋谱", false});                      // 14
-    m_buttons.push_back({{px + pgnBw + gap, by, pgnBw, bh}, "导入棋谱", false});          // 15
-    m_buttons.push_back({{px + (pgnBw + gap) * 2, by, pgnBw, bh}, "编辑棋局", false});   // 16
+    m_buttons.push_back({{px, by, pgnBw, bh}, "导出棋谱", false});                      // 15
+    m_buttons.push_back({{px + pgnBw + gap, by, pgnBw, bh}, "导入棋谱", false});          // 16
+    m_buttons.push_back({{px + (pgnBw + gap) * 2, by, pgnBw, bh}, "编辑棋局", false});   // 17
 }
 
 void GUI::newGame() {
@@ -182,12 +183,17 @@ void GUI::newGame() {
     m_viewIndex = -1;
     m_moveListScroll = 0;
     m_noCaptureCount = 0;
+    m_analysisMode = false;
+    m_ignoreNextBestMove = false;
+    m_pvArrow1.valid = false;
+    m_pvArrow2.valid = false;
     // 计时器重置
     m_redTimer = {};
     m_blackTimer = {};
     startMoveTimer();
     m_rules.reloadFromFile(); // 每局重新读取规则文件
     m_viewBoard.reset();
+    initButtons(); // 刷新按钮文字（分析模式状态等）
 
     // 启动引擎
     if (!m_settings.enginePath.empty() && !m_engine.isRunning()) {
@@ -283,12 +289,74 @@ void GUI::tryStartEngineMove() {
     if (m_uiState == UIState::GAME_OVER) return;
     if (isViewingHistory()) return;
     if (m_engine.isThinking()) return;
+    if (m_analysisMode) {
+        startAnalysis();
+        return;
+    }
     if (isEngineTurn() && m_engine.isRunning()) {
         startEngineMove();
     }
 }
 
+void GUI::startAnalysis() {
+    if (!m_engine.isRunning()) return;
+    // 无论 m_thinking 状态如何，总是先 stop 再 go
+    // 使用 sendStopForRestart 保证旧 bestmove 回复不会打断新的 go infinite
+    m_engine.sendStopForRestart();
+
+    // 构造走法列表
+    std::vector<std::string> uciMoves;
+    for (auto& mr : m_moveHistory)
+        uciMoves.push_back(Board::moveToUCI(mr.move));
+
+    std::string fen;
+    if (m_moveHistory.empty())
+        fen = m_board.toFEN();
+    else
+        fen = m_moveHistory.front().fenBefore;
+
+    m_engine.sendPosition(fen, uciMoves);
+    m_engine.sendGo(0, 0, 0, 0);  // go infinite
+}
+
+void GUI::toggleAnalysisMode() {
+    m_analysisMode = !m_analysisMode;
+    if (m_analysisMode) {
+        // 进入分析模式：停止当前引擎走棋，开始无限分析
+        if (m_engine.isThinking()) m_engine.sendStop();
+        m_message = "分析模式: 开";
+        m_messageTime = SDL_GetTicks();
+        initButtons();
+        // 稍后启动分析
+        if (m_uiState != UIState::GAME_OVER && !isViewingHistory())
+            startAnalysis();
+    } else {
+        // 退出分析模式
+        if (m_engine.isThinking()) {
+            // 必须先设标志，再发 stop，防止引擎回复 bestmove 时错误执行走棋
+            m_ignoreNextBestMove = true;
+            m_engine.sendStop();
+        }
+        m_engineInfoText.clear();
+        m_pvArrow1.valid = false;
+        m_pvArrow2.valid = false;
+        m_message = "分析模式: 关";
+        m_messageTime = SDL_GetTicks();
+        initButtons();
+        // 如果轮到引擎走，恢复引擎走棋
+        tryStartEngineMove();
+    }
+}
+
 void GUI::onEngineBestMove(const std::string& uci) {
+    // 忽略由停止分析产生的 bestmove
+    if (m_ignoreNextBestMove) {
+        m_ignoreNextBestMove = false;
+        return;
+    }
+    // 分析模式下忽略bestmove（不自动走棋）
+    if (m_analysisMode) return;
+
     if (uci.empty() || uci == "(none)") return;
 
     Move move = Board::uciToMove(uci, m_board);
@@ -334,6 +402,9 @@ void GUI::onEngineBestMove(const std::string& uci) {
     }
 
     // 若下一方也由引擎控制，继续走
+    // 走棋后清除旧箭头
+    m_pvArrow1.valid = false;
+    m_pvArrow2.valid = false;
     tryStartEngineMove();
 }
 
@@ -349,6 +420,29 @@ void GUI::onEngineInfo(const EngineInfo& info) {
     if (info.nps > 0) oss << "  速度: " << info.nps / 1000 << "k/s";
     if (!info.pv.empty()) oss << "\n路线: " << pvToReadable(info.pv);
     m_engineInfoText = oss.str();
+
+    // 解析 PV 前两步用于查棋箭头显示
+    m_pvArrow1.valid = false;
+    m_pvArrow2.valid = false;
+    if (!info.pv.empty()) {
+        Board tmpBoard;
+        tmpBoard.fromFEN(m_board.toFEN());
+        std::istringstream pvss(info.pv);
+        std::string uci;
+        int count = 0;
+        while (pvss >> uci && count < 2) {
+            Move mv = Board::uciToMove(uci, tmpBoard);
+            if (mv.fromRow < 0) break;
+            mv.captured = tmpBoard.get(mv.toRow, mv.toCol);
+            if (count == 0)
+                m_pvArrow1 = {true, mv, tmpBoard.currentSide()};
+            else
+                m_pvArrow2 = {true, mv, tmpBoard.currentSide()};
+            tmpBoard.makeMove(mv);
+            tmpBoard.switchSide();
+            count++;
+        }
+    }
 }
 
 std::string GUI::pvToReadable(const std::string& pv) const {
@@ -390,6 +484,11 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
     Piece p = m_board.get(fromR, fromC);
     if (p.empty()) return;
 
+    // 分析模式下先停止当前分析（startAnalysis 内部也会 stop，此处可省，但保留以快速响应UI）
+    if (m_analysisMode) {
+        m_engine.sendStopForRestart();
+    }
+
     // 如果在浏览历史，回到实时局面
     if (m_viewIndex >= 0) {
         m_viewIndex = -1;
@@ -430,7 +529,9 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
     }
 
     // 引擎走棋
-    if (m_gameMode == GameMode::HUMAN_VS_ENGINE) {
+    if (m_analysisMode) {
+        startAnalysis();
+    } else if (m_gameMode == GameMode::HUMAN_VS_ENGINE) {
         tryStartEngineMove();
     }
 }
@@ -508,7 +609,9 @@ bool GUI::checkGameRules() {
 }
 
 void GUI::undoLastMove() {
-    if (m_engine.isThinking()) {
+    if (m_analysisMode) {
+        m_engine.sendStopForRestart();  // 分析模式：重启前 stop
+    } else if (m_engine.isThinking()) {
         m_engine.sendStop();
     }
 
@@ -517,8 +620,8 @@ void GUI::undoLastMove() {
         m_viewIndex = -1;
     }
 
-    // 人机模式下悔两步（人+机）
-    int undoCount = (m_gameMode == GameMode::HUMAN_VS_ENGINE) ? 2 : 1;
+    // 人机模式下悔两步（人+机），分析模式下只悔一步
+    int undoCount = (m_gameMode == GameMode::HUMAN_VS_ENGINE && !m_analysisMode) ? 2 : 1;
     for (int i = 0; i < undoCount && !m_moveHistory.empty(); i++) {
         auto& rec = m_moveHistory.back();
         m_board.undoMove(rec.move);
@@ -547,6 +650,11 @@ void GUI::undoLastMove() {
         m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves) {
             onCloudBookResult(moves);
         });
+    }
+
+    // 分析模式下重新分析
+    if (m_analysisMode) {
+        startAnalysis();
     }
 }
 
@@ -807,6 +915,7 @@ void GUI::handleMouseDown(int x, int y) {
                     m_settingsLines.push_back("  F - 翻转棋盘");
                     m_settingsLines.push_back("  M - 镜像棋盘");
                     m_settingsLines.push_back("  S - 停止引擎思考");
+                    m_settingsLines.push_back("  A - 开关分析模式");
                     m_settingsLines.push_back("  C - 开关云库");
                     m_settingsLines.push_back("  ESC - 关闭设置");
                     m_settingsLines.push_back("  1-9 - 设置搜索深度(x2)");
@@ -849,28 +958,31 @@ void GUI::handleMouseDown(int x, int y) {
                     m_messageTime = SDL_GetTicks();
                 }
                 break;
-            case 9: // 加载引擎
+            case 9: // 分析
+                toggleAnalysisMode();
+                break;
+            case 10: // 加载引擎
                 openEngineFileDialog();
                 break;
-            case 10: // 首步
+            case 11: // 首步
                 if (!m_moveHistory.empty()) navigateTo(0);
                 break;
-            case 11: // 后退
+            case 12: // 后退
                 navigateBackward();
                 break;
-            case 12: // 前进
+            case 13: // 前进
                 navigateForward();
                 break;
-            case 13: // 末步
+            case 14: // 末步
                 navigateTo(-1);
                 break;
-            case 14: // 导出棋谱
+            case 15: // 导出棋谱
                 openPGNExportDialog();
                 break;
-            case 15: // 导入棋谱
+            case 16: // 导入棋谱
                 openPGNImportDialog();
                 break;
-            case 16: // 编辑棋局
+            case 17: // 编辑棋局
                 if (m_uiState == UIState::EDITING) {
                     exitEditMode();
                 } else {
@@ -930,8 +1042,8 @@ void GUI::handleMouseDown(int x, int y) {
         return;
     }
 
-    // 引擎思考中不允许操作棋盘
-    if (m_engine.isThinking()) return;
+    // 引擎思考中不允许操作棋盘（分析模式除外）
+    if (m_engine.isThinking() && !m_analysisMode) return;
 
     // 棋谱点击（浏览历史时也允许点击跳转）
     int moveIdx = moveListHitTest(x, y);
@@ -968,8 +1080,8 @@ void GUI::handleMouseDown(int x, int y) {
     } else {
         // 未选中，选子
         if (!clicked.empty() && clicked.side == m_board.currentSide()) {
-            // 人机模式下不能走引擎控制的棋
-            if (m_gameMode == GameMode::HUMAN_VS_ENGINE && isEngineTurn())
+            // 人机模式下不能走引擎控制的棋（分析模式除外）
+            if (m_gameMode == GameMode::HUMAN_VS_ENGINE && !m_analysisMode && isEngineTurn())
                 return;
             m_selRow = row;
             m_selCol = col;
@@ -1001,6 +1113,9 @@ void GUI::handleKeyDown(SDL_Keycode key) {
         case SDLK_m: m_settings.mirrorBoard = !m_settings.mirrorBoard; break;
         case SDLK_s:
             if (m_engine.isThinking()) m_engine.sendStop();
+            break;
+        case SDLK_a:
+            toggleAnalysisMode();
             break;
         case SDLK_c:
             m_settings.useCloudBook = !m_settings.useCloudBook;
@@ -1150,6 +1265,23 @@ void GUI::render() {
     if (!isViewingHistory() && m_selRow >= 0 && m_selCol >= 0) {
         m_renderer.drawSelection(m_selRow, m_selCol, m_settings.flipBoard, m_settings.mirrorBoard);
         m_renderer.drawLegalMoves(m_legalMoves, m_settings.flipBoard, m_settings.mirrorBoard);
+    }
+
+    // PV 箭头（引擎思考或分析模式时，棋谱浏览/编辑模式下不显示）
+    if (m_uiState != UIState::EDITING && !isViewingHistory()) {
+        PVArrow a1, a2;
+        {
+            std::lock_guard<std::mutex> lock(m_infoMutex);
+            a1 = m_pvArrow1;
+            a2 = m_pvArrow2;
+        }
+        Side cur = dispBoard.currentSide();
+        if (a1.valid)
+            m_renderer.drawPVArrow(a1.move, a1.side, a1.side == cur,
+                                   m_settings.flipBoard, m_settings.mirrorBoard);
+        if (a2.valid)
+            m_renderer.drawPVArrow(a2.move, a2.side, a2.side == cur,
+                                   m_settings.flipBoard, m_settings.mirrorBoard);
     }
 
     // 侧边信息栏 或 编辑面板

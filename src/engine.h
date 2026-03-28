@@ -45,6 +45,7 @@ public:
     void sendPosition(const std::string& fen, const std::vector<std::string>& moves = {});
     void sendGo(int depth = 0, int movetime = 0, int wtime = 0, int btime = 0);
     void sendStop();
+    void sendStopForRestart();  // 将要重新分析时调用，使 bestmove 回复不重置 m_thinking
     void sendQuit();
     void sendSetOption(const std::string& name, const std::string& value);
 
@@ -71,6 +72,7 @@ private:
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_ready{false};
     std::atomic<bool> m_thinking{false};
+    std::atomic<bool> m_skipNextBestMove{false};  // 重启分析时忽略旧 bestmove
     std::thread m_readThread;
 
     InfoCallback m_infoCb;

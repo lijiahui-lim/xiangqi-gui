@@ -357,6 +357,87 @@ void Renderer::drawLastMove(const Move& move, bool flipped, bool mirrored) {
     SDL_RenderFillRect(m_renderer, &r2);
 }
 
+void Renderer::drawPVArrow(const Move& move, Side side, bool active, bool flipped, bool mirrored) {
+    int sx1, sy1, sx2, sy2;
+    boardToScreen(move.fromRow, move.fromCol, sx1, sy1, flipped, mirrored);
+    boardToScreen(move.toRow, move.toCol, sx2, sy2, flipped, mirrored);
+
+    float dx = (float)(sx2 - sx1);
+    float dy = (float)(sy2 - sy1);
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 2.0f) return;
+
+    float ux = dx / len, uy = dy / len;  // 方向单位向量
+    float perx = -uy, pery = ux;         // 垂直单位向量
+
+    // 缩短两端避免完全压住棋子圆心
+    float shrink = m_pieceRadius * 0.65f;
+    float ax1 = sx1 + ux * shrink;
+    float ay1 = sy1 + uy * shrink;
+    float ax2 = sx2 - ux * shrink;
+    float ay2 = sy2 - uy * shrink;
+
+    float headLen   = m_cellSize * 0.28f;
+    float headWidth = m_cellSize * 0.15f;
+    int   thick     = std::max(2, m_cellSize / 15);
+
+    // 箭头杆终点（为箭头头部留空间）
+    float bx2 = ax2 - ux * headLen;
+    float by2 = ay2 - uy * headLen;
+
+    Uint8 r, g, b;
+    Uint8 alpha = active ? 235 : 90;
+
+    if (side == Side::RED) {
+        r = 220; g = 20; b = 20;
+    } else {
+        r = 0; g = 0; b = 0;
+    }
+
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+    // 黑色箭头在木色棋盘上不明显，先画淡色轮廓增强可见性
+    if (side == Side::BLACK) {
+        Uint8 outA = active ? 160 : 55;
+        for (int t = -(thick / 2 + 2); t <= (thick / 2 + 2); t++) {
+            int ox = (int)(perx * t), oy = (int)(pery * t);
+            SDL_SetRenderDrawColor(m_renderer, 230, 210, 170, outA);
+            SDL_RenderDrawLine(m_renderer,
+                (int)ax1 + ox, (int)ay1 + oy,
+                (int)bx2 + ox, (int)by2 + oy);
+        }
+    }
+
+    // 箭头杆
+    for (int t = -thick / 2; t <= thick / 2; t++) {
+        int ox = (int)(perx * t), oy = (int)(pery * t);
+        SDL_SetRenderDrawColor(m_renderer, r, g, b, alpha);
+        SDL_RenderDrawLine(m_renderer,
+            (int)ax1 + ox, (int)ay1 + oy,
+            (int)bx2 + ox, (int)by2 + oy);
+    }
+
+    // 箭头头部（三角形）
+    Sint16 tx  = (Sint16)ax2;
+    Sint16 ty  = (Sint16)ay2;
+    Sint16 hx1 = (Sint16)(ax2 - ux * headLen + perx * headWidth);
+    Sint16 hy1 = (Sint16)(ay2 - uy * headLen + pery * headWidth);
+    Sint16 hx2 = (Sint16)(ax2 - ux * headLen - perx * headWidth);
+    Sint16 hy2 = (Sint16)(ay2 - uy * headLen - pery * headWidth);
+
+    // 黑方：先画轮廓三角
+    if (side == Side::BLACK) {
+        Uint8 outA = active ? 160 : 55;
+        Sint16 ohx1 = (Sint16)(ax2 - ux * headLen + perx * (headWidth + 2.5f));
+        Sint16 ohy1 = (Sint16)(ay2 - uy * headLen + pery * (headWidth + 2.5f));
+        Sint16 ohx2 = (Sint16)(ax2 - ux * headLen - perx * (headWidth + 2.5f));
+        Sint16 ohy2 = (Sint16)(ay2 - uy * headLen - pery * (headWidth + 2.5f));
+        filledTrigonRGBA(m_renderer, tx, ty, ohx1, ohy1, ohx2, ohy2, 230, 210, 170, outA);
+    }
+
+    filledTrigonRGBA(m_renderer, tx, ty, hx1, hy1, hx2, hy2, r, g, b, alpha);
+}
+
 void Renderer::drawSidePanel(const std::string& engineName, const std::string& infoText,
                               const std::vector<CloudBookMove>& cloudMoves,
                               Side currentSide, bool engineThinking) {

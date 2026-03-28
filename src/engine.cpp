@@ -93,6 +93,14 @@ void UCIEngine::sendNewGame() { sendCommand("ucinewgame"); }
 void UCIEngine::sendQuit() { sendCommand("quit"); }
 void UCIEngine::sendStop() { sendCommand("stop"); m_thinking = false; }
 
+void UCIEngine::sendStopForRestart() {
+    // 设标志：下一个 bestmove 不重置 m_thinking
+    m_skipNextBestMove = true;
+    sendCommand("stop");
+    // 不在这里把 m_thinking 设为 false，保留 true 功能不重要，
+    // 反正 sendGo 会再次把它设为 true
+}
+
 void UCIEngine::sendPosition(const std::string& fen, const std::vector<std::string>& moves) {
     std::string cmd = "position fen " + fen;
     if (!moves.empty()) {
@@ -214,9 +222,13 @@ void UCIEngine::parseLine(const std::string& line) {
         if (m_infoCb) m_infoCb(info);
     }
     else if (token == "bestmove") {
-        m_thinking = false;
         std::string bm;
         ss >> bm;
+        if (m_skipNextBestMove.exchange(false)) {
+            // 是重启前的当前搜索的 bestmove，不重置 m_thinking，不回调
+            return;
+        }
+        m_thinking = false;
         if (m_bestMoveCb) m_bestMoveCb(bm);
     }
 }
