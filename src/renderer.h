@@ -95,6 +95,17 @@ public:
     int moveListHitTest(int x, int y, int numMoves, int scrollOffset,
                         int areaTop, int areaHeight) const;
 
+    // 左侧计时面板
+    void drawClockPanel(Uint32 redTotalMs, Uint32 redLastMs,
+                        Uint32 blackTotalMs, Uint32 blackLastMs,
+                        Side currentSide, bool flipped, bool mirrored);
+
+    // 棋局编辑面板（在展示区中间）
+    // 返回 false=面板未点击, true=已处理点击
+    void drawEditPalette(const Piece& selected);
+    // -1=nothing, 0..13=棋子, 14=橡皮擦, 15=清空, 16=还原, 17=完成
+    int editPaletteHitTest(int x, int y) const;
+
     // 面板布局分区（按钮区高度和棋谱区位置由此统一计算）
     struct PanelLayout {
         int infoTop;       // 引擎信息区顶部
@@ -113,6 +124,7 @@ private:
     TTF_Font* m_fontMedium = nullptr;  // 标题
     TTF_Font* m_fontSmall = nullptr;   // 面板正文
     TTF_Font* m_fontPanel = nullptr;   // 面板小字
+    TTF_Font* m_fontClock = nullptr;   // 时钟标签（粗体）
     std::string m_fontPath;
 
     int m_windowW, m_windowH;
@@ -120,6 +132,13 @@ private:
     int m_cellSize;
     int m_pieceRadius;
     int m_panelLeft;
+    int m_clockW = 0;  // 左侧时钟列宽度
+
+    // 编辑面板按钮区域（用于 hit-test）
+    mutable std::vector<SDL_Rect> m_editPieceRects;  // 0..14
+    mutable SDL_Rect m_editClearRect  = {0,0,0,0};
+    mutable SDL_Rect m_editResetRect  = {0,0,0,0};
+    mutable SDL_Rect m_editDoneRect   = {0,0,0,0};
 
     void drawBoardGrid();
     void drawBoardLabels(bool flipped, bool mirrored = false);

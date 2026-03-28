@@ -71,29 +71,37 @@ void Renderer::recalcLayout(int windowW, int windowH) {
     m_windowW = windowW;
     m_windowH = windowH;
 
-    // 面板至少需要 180px 宽度
-    int minPanelW = 180;
-    int boardAreaW = std::max(windowW - minPanelW - 30, windowW * 3 / 5);
-    // 但不能超过窗口的 70%
-    boardAreaW = std::min(boardAreaW, windowW * 7 / 10);
-    int boardAreaH = windowH - 40;
+    // drawBoardGrid 中棋盘背景是 [boardLeft - cs/2 - boardPad, ...]
+    const int boardPad    = 8;
+    const int CLOCK_GAP   = 6;   // 时钟右边缘 → 棋盘背景左边缘
+    const int PANEL_GAP   = 8;   // 棋盘背景右边缘 → 面板左边缘
+    const int RIGHT_MARGIN = 10;
+    const int MIN_PANEL_W  = 180;
 
-    m_cellSize = std::min(boardAreaH / 10, (boardAreaW - 40) / 9);
-    m_cellSize = std::max(m_cellSize, 20);
+    // 时钟字体大小（与 reloadFonts 中保持一致）
+    int panelBase0  = std::max(m_windowH / 50, 10);
+    int clockFontSz = std::max(panelBase0 + 3, 13);
+    // 时钟列宽 = 容纳「步时 MM:SS」最宽行 + 左色条 + 左右内边距
+    // "步时 " 约 2.5字符宽，时间串约 2字符宽，共约 4.5 字符
+    m_clockW = std::max(44, clockFontSz * 5 + 16);
+
+    // cellSize 受高度限制，同时也受「保留最小面板后的剩余宽度」限制
+    int cellFromH = (windowH - 40) / 10;
+    int availW    = windowW - m_clockW - CLOCK_GAP - PANEL_GAP - MIN_PANEL_W - RIGHT_MARGIN;
+    int cellFromW = (availW - boardPad * 2) / 9;
+    m_cellSize    = std::max(20, std::min(cellFromH, cellFromW));
     m_pieceRadius = m_cellSize * 2 / 5;
 
-    // 棋盘居中于棋盘区域
-    int boardW = m_cellSize * 8;
-    m_boardLeft = std::max(10, (boardAreaW - boardW) / 2);
-    m_boardTop = std::max(15, (windowH - m_cellSize * 9) / 2);
+    // 棋盘背景视觉宽：cellSize*9 + boardPad*2（含左右各半格+pad）
+    int boardVisualW    = m_cellSize * 9 + boardPad * 2;
+    int boardVisualLeft = m_clockW + CLOCK_GAP;          // 紧贴时钟，无额外空白
 
-    // 面板紧跟棋盘右侧，留适当间距
-    int panelGap = std::max(15, m_cellSize / 2);
-    m_panelLeft = m_boardLeft + boardW + panelGap;
-    // 确保面板有最小宽度
-    if (windowW - m_panelLeft < minPanelW) {
-        m_panelLeft = windowW - minPanelW - 10;
-    }
+    // boardLeft = 网格第一条竖线（drawBoardGrid 的 left 变量）
+    m_boardLeft = boardVisualLeft + boardPad + m_cellSize / 2;
+    m_boardTop  = std::max(15, (windowH - m_cellSize * 9) / 2);
+
+    // 面板紧接棋盘背景右侧，填满剩余空间（无居中留白）
+    m_panelLeft = boardVisualLeft + boardVisualW + PANEL_GAP;
 
     reloadFonts(m_cellSize);
 }
@@ -105,6 +113,7 @@ void Renderer::reloadFonts(int cellSize) {
     if (m_fontMedium) { TTF_CloseFont(m_fontMedium); m_fontMedium = nullptr; }
     if (m_fontSmall) { TTF_CloseFont(m_fontSmall); m_fontSmall = nullptr; }
     if (m_fontPanel) { TTF_CloseFont(m_fontPanel); m_fontPanel = nullptr; }
+    if (m_fontClock) { TTF_CloseFont(m_fontClock); m_fontClock = nullptr; }
 
     // 棋子字体随cellSize缩放
     int largeSz = std::max(12, cellSize * 7 / 10);
@@ -113,11 +122,15 @@ void Renderer::reloadFonts(int cellSize) {
     int medSz = std::max(panelBase + 4, 14);
     int smallSz = std::max(panelBase + 1, 11);
     int panelSz = std::max(panelBase, 9);
+    // 时钟标签字体：比面板字体大，加粗
+    int clockSz = std::max(panelBase + 3, 13);
 
     m_fontLarge = TTF_OpenFont(m_fontPath.c_str(), largeSz);
     m_fontMedium = TTF_OpenFont(m_fontPath.c_str(), medSz);
     m_fontSmall = TTF_OpenFont(m_fontPath.c_str(), smallSz);
     m_fontPanel = TTF_OpenFont(m_fontPath.c_str(), panelSz);
+    m_fontClock = TTF_OpenFont(m_fontPath.c_str(), clockSz);
+    if (m_fontClock) TTF_SetFontStyle(m_fontClock, TTF_STYLE_BOLD);
 }
 
 Renderer::PanelLayout Renderer::calcPanelLayout() const {
@@ -149,6 +162,7 @@ void Renderer::shutdown() {
     if (m_fontMedium) { TTF_CloseFont(m_fontMedium); m_fontMedium = nullptr; }
     if (m_fontSmall) { TTF_CloseFont(m_fontSmall); m_fontSmall = nullptr; }
     if (m_fontPanel) { TTF_CloseFont(m_fontPanel); m_fontPanel = nullptr; }
+    if (m_fontClock) { TTF_CloseFont(m_fontClock); m_fontClock = nullptr; }
     if (m_renderer) { SDL_DestroyRenderer(m_renderer); m_renderer = nullptr; }
     if (m_window) { SDL_DestroyWindow(m_window); m_window = nullptr; }
     TTF_Quit();
@@ -766,4 +780,223 @@ int Renderer::moveListHitTest(int x, int y, int numMoves, int scrollOffset,
         if (idx < numMoves) return idx;
         return row * 2; // 黑方空则回退到红方
     }
+}
+
+// -------- 计时器卡片（左侧上下两端） --------
+static std::string fmtTime(Uint32 ms) {
+    int s = (int)(ms / 1000);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d:%02d", s / 60, s % 60);
+    return buf;
+}
+
+void Renderer::drawClockPanel(Uint32 redTotalMs, Uint32 redLastMs,
+                               Uint32 blackTotalMs, Uint32 blackLastMs,
+                               Side currentSide, bool flipped, bool mirrored)
+{
+    if (!m_fontPanel || !m_fontSmall) return;
+    int cw = m_clockW - 6;  // 卡片内容宽度
+    if (cw < 36) return;
+
+    int lineH = std::max(13, m_windowH / 46);
+    int lineGap = std::max(4, lineH / 3);   // 行间额外间距
+    int cardH = lineH * 3 + lineGap * 2 + 14;
+    int cardW = cw;
+
+    // 时钟始终在棋盘左侧，镜像不影响位置
+    (void)mirrored;
+    int cx   = 3;
+    int topY = m_boardTop;
+    int botY = m_boardTop + 9 * m_cellSize - cardH;
+
+    auto drawCard = [&](int x, int y, const char* label,
+                        Uint32 totalMs, Uint32 lastMs,
+                        SDL_Color sideCol, bool isActive)
+    {
+        SDL_Rect bg = {x, y, cardW, cardH};
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer,
+            isActive ? 50 : 45, isActive ? 45 : 42, isActive ? 35 : 40,
+            isActive ? 230 : 200);
+        SDL_RenderFillRect(m_renderer, &bg);
+
+        // 左侧色条
+        SDL_Rect bar = {x, y + 3, 3, cardH - 6};
+        SDL_SetRenderDrawColor(m_renderer, sideCol.r, sideCol.g, sideCol.b,
+                               isActive ? 255 : 100);
+        SDL_RenderFillRect(m_renderer, &bar);
+
+        if (isActive) {
+            SDL_SetRenderDrawColor(m_renderer, sideCol.r, sideCol.g, sideCol.b, 180);
+            SDL_RenderDrawRect(m_renderer, &bg);
+        }
+
+        int tx = x + 7;
+        int ty = y + 4;
+
+        SDL_Color nameCol = isActive ? SDL_Color{255,255,255,255}
+                                     : SDL_Color{150,150,150,255};
+        drawText(label, tx, ty, nameCol, m_fontClock ? m_fontClock : m_fontSmall);
+        ty += lineH + lineGap;
+
+        SDL_Color timeCol = isActive ? SDL_Color{255,225,80,255}
+                                     : SDL_Color{185,185,185,255};
+        drawText("局时 " + fmtTime(totalMs), tx, ty, timeCol, m_fontSmall);
+        ty += lineH + lineGap;
+
+        SDL_Color stepCol = {110, 110, 110, 255};
+        drawText("步时 " + fmtTime(lastMs), tx, ty, stepCol, m_fontPanel);
+    };
+
+    SDL_Color redSideCol   = {200, 60,  50,  255};
+    SDL_Color blackSideCol = {100, 100, 100, 255};
+
+    if (!flipped) {
+        // 上黑下红
+        drawCard(cx, topY, "黑方", blackTotalMs, blackLastMs,
+                 blackSideCol, currentSide == Side::BLACK);
+        drawCard(cx, botY, "红方", redTotalMs, redLastMs,
+                 redSideCol, currentSide == Side::RED);
+    } else {
+        drawCard(cx, topY, "红方", redTotalMs, redLastMs,
+                 redSideCol, currentSide == Side::RED);
+        drawCard(cx, botY, "黑方", blackTotalMs, blackLastMs,
+                 blackSideCol, currentSide == Side::BLACK);
+    }
+}
+
+// -------- 棋局编辑面板 --------
+// 棋子顺序（0-6红，7-13黑）
+static const PieceType kPaletteTypes[] = {
+    PieceType::KING, PieceType::ADVISOR, PieceType::BISHOP,
+    PieceType::KNIGHT, PieceType::ROOK, PieceType::CANNON, PieceType::PAWN
+};
+
+void Renderer::drawEditPalette(const Piece& selected)
+{
+    auto lay = calcPanelLayout();
+    int px = m_panelLeft;
+    int pw = m_windowW - px - 15;
+    int py = lay.infoTop;
+
+    SDL_Color yellow = {255, 220, 100, 255};
+    SDL_Color white  = {220, 220, 220, 255};
+    SDL_Color gray   = {140, 140, 140, 255};
+
+    // 标题
+    if (m_fontSmall)
+        drawText("棋局编辑", px, py, yellow, m_fontSmall);
+    py += std::max(18, m_windowH / 32) + 6;
+
+    // 每个棋子按钮半径
+    int pr = std::max(14, std::min(m_pieceRadius, pw / 16));
+    int spacing = pr * 2 + 6;
+    int rowPad = pr + 3;
+
+    m_editPieceRects.clear();
+    m_editPieceRects.resize(15); // 0..13 pieces, 14 eraser
+
+    // 红方一行（7个棋子）
+    for (int i = 0; i < 7; i++) {
+        int cx = px + rowPad + i * spacing;
+        int cy = py + pr;
+        Piece p{kPaletteTypes[i], Side::RED};
+        bool isSel = !selected.empty() && selected.type == p.type && selected.side == p.side;
+
+        SDL_Color bg    = isSel ? SDL_Color{240, 200, 80, 255} : SDL_Color{250, 230, 180, 255};
+        SDL_Color pcol  = {180, 30, 20, 255};
+        filledCircleRGBA(m_renderer, cx, cy, pr, bg.r, bg.g, bg.b, 255);
+        aacircleRGBA(m_renderer, cx, cy, pr, pcol.r, pcol.g, pcol.b, 255);
+        if (isSel) aacircleRGBA(m_renderer, cx, cy, pr + 2, 255, 200, 0, 255);
+        if (m_fontPanel) drawTextCentered(pieceChar(p.type, p.side), cx, cy, pcol, m_fontPanel);
+
+        m_editPieceRects[i] = {cx - pr, cy - pr, pr * 2, pr * 2};
+    }
+    py += pr * 2 + 8;
+
+    // 黑方一行（7个棋子）
+    for (int i = 0; i < 7; i++) {
+        int cx = px + rowPad + i * spacing;
+        int cy = py + pr;
+        Piece p{kPaletteTypes[i], Side::BLACK};
+        bool isSel = !selected.empty() && selected.type == p.type && selected.side == p.side;
+
+        SDL_Color bg   = isSel ? SDL_Color{240, 200, 80, 255} : SDL_Color{250, 230, 180, 255};
+        SDL_Color pcol = {20, 20, 20, 255};
+        filledCircleRGBA(m_renderer, cx, cy, pr, bg.r, bg.g, bg.b, 255);
+        aacircleRGBA(m_renderer, cx, cy, pr, pcol.r, pcol.g, pcol.b, 255);
+        if (isSel) aacircleRGBA(m_renderer, cx, cy, pr + 2, 255, 200, 0, 255);
+        if (m_fontPanel) drawTextCentered(pieceChar(p.type, p.side), cx, cy, pcol, m_fontPanel);
+
+        m_editPieceRects[7 + i] = {cx - pr, cy - pr, pr * 2, pr * 2};
+    }
+    py += pr * 2 + 8;
+
+    // 橡皮擦
+    {
+        int cx = px + rowPad + pr;
+        int cy = py + pr;
+        bool isSel = selected.empty();
+        SDL_Color bg = isSel ? SDL_Color{240, 200, 80, 255} : SDL_Color{80, 76, 72, 255};
+        filledCircleRGBA(m_renderer, cx, cy, pr, bg.r, bg.g, bg.b, 255);
+        aacircleRGBA(m_renderer, cx, cy, pr, 160, 160, 160, 255);
+        if (isSel) aacircleRGBA(m_renderer, cx, cy, pr + 2, 255, 200, 0, 255);
+        if (m_fontPanel) drawTextCentered("擦", cx, cy, white, m_fontPanel);
+        m_editPieceRects[14] = {cx - pr, cy - pr, pr * 2, pr * 2};
+        py += pr * 2 + 8;
+    }
+
+    // 分隔线
+    SDL_SetRenderDrawColor(m_renderer, 100, 96, 92, 255);
+    SDL_RenderDrawLine(m_renderer, px, py, px + pw, py);
+    py += 6;
+
+    // 操作按钮
+    int bh = std::max(22, m_windowH / 26);
+    int bw = std::max(50, (pw - 8) / 3);
+    int gap = std::max(3, (pw - bw * 3) / 2);
+
+    auto drawBtn = [&](SDL_Rect r, const char* lbl) {
+        SDL_SetRenderDrawColor(m_renderer, 70, 66, 62, 255);
+        SDL_RenderFillRect(m_renderer, &r);
+        SDL_SetRenderDrawColor(m_renderer, 120, 116, 112, 255);
+        SDL_RenderDrawRect(m_renderer, &r);
+        if (m_fontPanel)
+            drawTextCentered(lbl, r.x + r.w / 2, r.y + r.h / 2, white, m_fontPanel);
+    };
+
+    m_editClearRect = {px,               py, bw, bh};
+    m_editResetRect = {px + bw + gap,     py, bw, bh};
+    m_editDoneRect  = {px + (bw + gap)*2, py, bw, bh};
+
+    drawBtn(m_editClearRect, "清空");
+    drawBtn(m_editResetRect, "还原");
+    drawBtn(m_editDoneRect,  "完成");
+    py += bh + 8;
+
+    // 提示文字
+    if (m_fontPanel) {
+        drawText("左键:放置  右键:删除", px, py, gray, m_fontPanel);
+    }
+}
+
+int Renderer::editPaletteHitTest(int x, int y) const
+{
+    // 棋子 0..14
+    for (int i = 0; i < (int)m_editPieceRects.size(); i++) {
+        const auto& r = m_editPieceRects[i];
+        if (r.w > 0) {
+            SDL_Point p{x, y};
+            SDL_Rect rr = r;
+            // enlarge hit area slightly
+            rr.x -= 3; rr.y -= 3; rr.w += 6; rr.h += 6;
+            if (SDL_PointInRect(&p, &rr)) return i;
+        }
+    }
+    // 操作按钮
+    SDL_Point p{x, y};
+    if (SDL_PointInRect(&p, &m_editClearRect)) return 15;
+    if (SDL_PointInRect(&p, &m_editResetRect)) return 16;
+    if (SDL_PointInRect(&p, &m_editDoneRect))  return 17;
+    return -1;
 }

@@ -9,6 +9,14 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+// 编辑面板棋子顺序（索引 0-6 红，7-13 黑）
+static const PieceType kPaletteOrder[] = {
+    PieceType::KING, PieceType::ADVISOR, PieceType::BISHOP,
+    PieceType::KNIGHT, PieceType::ROOK, PieceType::CANNON, PieceType::PAWN
+};
+} // namespace
+
 GUI::GUI() = default;
 GUI::~GUI() {
     saveConfig();
@@ -155,10 +163,11 @@ void GUI::initButtons() {
     m_buttons.push_back({{px + (navBw + gap) * 2, by, navBw, bh}, ">", false});     // 12
     m_buttons.push_back({{px + (navBw + gap) * 3, by, navBw, bh}, ">|", false});   // 13
     by -= bh + gap;
-    // 第6行：导出 / 导入棋谱
-    int pgnBw = std::max(50, (pw - gap) / 2);
-    m_buttons.push_back({{px, by, pgnBw, bh}, "导出棋谱", false});               // 14
-    m_buttons.push_back({{px + pgnBw + gap, by, pgnBw, bh}, "导入棋谱", false}); // 15
+    // 第6行：导出 / 导入棋谱 / 编辑
+    int pgnBw = std::max(40, (pw - gap * 2) / 3);
+    m_buttons.push_back({{px, by, pgnBw, bh}, "导出棋谱", false});                      // 14
+    m_buttons.push_back({{px + pgnBw + gap, by, pgnBw, bh}, "导入棋谱", false});          // 15
+    m_buttons.push_back({{px + (pgnBw + gap) * 2, by, pgnBw, bh}, "编辑棋局", false});   // 16
 }
 
 void GUI::newGame() {
@@ -173,6 +182,10 @@ void GUI::newGame() {
     m_viewIndex = -1;
     m_moveListScroll = 0;
     m_noCaptureCount = 0;
+    // 计时器重置
+    m_redTimer = {};
+    m_blackTimer = {};
+    startMoveTimer();
     m_rules.reloadFromFile(); // 每局重新读取规则文件
     m_viewBoard.reset();
 
@@ -279,6 +292,9 @@ void GUI::onEngineBestMove(const std::string& uci) {
     Piece p = m_board.get(move.fromRow, move.fromCol);
     if (p.empty() || p.side != m_board.currentSide()) return;
 
+    // 记录本步用时
+    stopMoveTimerAndRecord(m_board.currentSide());
+
     move.captured = m_board.get(move.toRow, move.toCol);
 
     std::string uciStr = uci;
@@ -297,6 +313,9 @@ void GUI::onEngineBestMove(const std::string& uci) {
         m_noCaptureCount = 0;
     else
         m_noCaptureCount++;
+
+    // 启动下一方计时器
+    startMoveTimer();
 
     // 检查规则
     if (!checkGameRules()) return;
@@ -370,6 +389,9 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
         m_viewIndex = -1;
     }
 
+    // 记录本步用时
+    stopMoveTimerAndRecord(m_board.currentSide());
+
     Move move = {fromR, fromC, toR, toC, m_board.get(toR, toC)};
     std::string uci = Board::moveToUCI(move);
     std::string chinese = uciToChineseNotation(uci, m_board);
@@ -387,6 +409,9 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
         m_noCaptureCount = 0;
     else
         m_noCaptureCount++;
+
+    // 启动下一方计时器
+    startMoveTimer();
 
     // 检查规则
     if (!checkGameRules()) return;
@@ -839,6 +864,50 @@ void GUI::handleMouseDown(int x, int y) {
             case 15: // 导入棋谱
                 openPGNImportDialog();
                 break;
+            case 16: // 编辑棋局
+                if (m_uiState == UIState::EDITING) {
+                    exitEditMode();
+                } else {
+                    enterEditMode();
+                }
+                break;
+        }
+        return;
+    }
+
+    // 编辑模式
+    if (m_uiState == UIState::EDITING) {
+        // 先检查编辑面板点击
+        int hit = editPaletteHitTest(x, y);
+        if (hit >= 0) {
+            if (hit <= 13) {
+                // 选择棋子
+                Side s = (hit < 7) ? Side::RED : Side::BLACK;
+                m_editPiece.type = kPaletteOrder[hit < 7 ? hit : hit - 7];
+                m_editPiece.side = s;
+                return;
+            } else if (hit == 14) {
+                m_editPiece = {};  // 橡皮擦
+                return;
+            } else if (hit == 15) {
+                // 清空棋盘
+                for (int r = 0; r < Board::ROWS; r++)
+                    for (int c = 0; c < Board::COLS; c++)
+                        m_board.set(r, c, Piece{});
+                return;
+            } else if (hit == 16) {
+                // 还原初始局面
+                m_board.reset();
+                return;
+            } else if (hit == 17) {
+                exitEditMode();
+                return;
+            }
+        }
+        // 棋盘点击：放置棋子
+        int row, col;
+        if (m_renderer.screenToBoard(x, y, row, col, m_settings.flipBoard, m_settings.mirrorBoard)) {
+            handleEditBoardClick(row, col, false);
         }
         return;
     }
@@ -972,6 +1041,14 @@ void GUI::handleEvent(SDL_Event& ev) {
         case SDL_MOUSEBUTTONDOWN:
             if (ev.button.button == SDL_BUTTON_LEFT)
                 handleMouseDown(ev.button.x, ev.button.y);
+            else if (ev.button.button == SDL_BUTTON_RIGHT && m_uiState == UIState::EDITING) {
+                // 右键：删除棋子
+                int row, col;
+                if (m_renderer.screenToBoard(ev.button.x, ev.button.y, row, col,
+                                              m_settings.flipBoard, m_settings.mirrorBoard)) {
+                    handleEditBoardClick(row, col, true);
+                }
+            }
             break;
         case SDL_MOUSEBUTTONUP:
             handleMouseUp(ev.button.x, ev.button.y);
@@ -1054,8 +1131,10 @@ void GUI::render() {
         m_renderer.drawLegalMoves(m_legalMoves, m_settings.flipBoard, m_settings.mirrorBoard);
     }
 
-    // 侧边信息栏
-    {
+    // 侧边信息栏 或 编辑面板
+    if (m_uiState == UIState::EDITING) {
+        m_renderer.drawEditPalette(m_editPiece);
+    } else {
         std::lock_guard<std::mutex> lock(m_infoMutex);
         m_renderer.drawSidePanel(m_engine.getEngineName(), m_engineInfoText,
                                   m_cloudMoves, dispBoard.currentSide(),
@@ -1080,6 +1159,24 @@ void GUI::render() {
 
     // 按钮
     m_renderer.drawButtons(m_buttons);
+
+    // 计时器面板（棋盘左侧）
+    {
+        Side cur = dispBoard.currentSide();
+        // 游戏结束后时钟冻结，不再累加
+        bool gameOver = (m_uiState == UIState::GAME_OVER);
+        Uint32 elapsedMs = (!gameOver && m_currentMoveStartTime > 0)
+            ? (SDL_GetTicks() - m_currentMoveStartTime) : 0;
+        Uint32 redTotal   = m_redTimer.totalMs   + (cur == Side::RED   ? elapsedMs : 0);
+        Uint32 blackTotal = m_blackTimer.totalMs + (cur == Side::BLACK ? elapsedMs : 0);
+        // 步时：当前走棋方实时累加，另一方显示上一步记录值
+        Uint32 redLast   = (cur == Side::RED)   ? elapsedMs : m_redTimer.lastMoveMs;
+        Uint32 blackLast = (cur == Side::BLACK) ? elapsedMs : m_blackTimer.lastMoveMs;
+        m_renderer.drawClockPanel(redTotal,   redLast,
+                                  blackTotal, blackLast,
+                                  cur, m_settings.flipBoard,
+                                  m_settings.mirrorBoard);
+    }
 
     // 设置面板
     m_renderer.drawSettingsPanel("引擎设置", m_settingsLines,
@@ -1313,6 +1410,71 @@ void GUI::moveListHandleScroll(int dy) {
     m_moveListScroll = std::max(0, std::min(m_moveListScroll, maxScroll));
 }
 
+// ========== 计时器 ==========
+
+void GUI::startMoveTimer() {
+    m_currentMoveStartTime = SDL_GetTicks();
+}
+
+void GUI::stopMoveTimerAndRecord(Side side) {
+    if (m_currentMoveStartTime == 0) return;
+    Uint32 elapsed = SDL_GetTicks() - m_currentMoveStartTime;
+    m_currentMoveStartTime = 0;
+    if (side == Side::RED) {
+        m_redTimer.totalMs   += elapsed;
+        m_redTimer.lastMoveMs = elapsed;
+    } else {
+        m_blackTimer.totalMs   += elapsed;
+        m_blackTimer.lastMoveMs = elapsed;
+    }
+}
+
+// ========== 棋局编辑 ==========
+
+void GUI::enterEditMode() {
+    if (m_engine.isThinking()) m_engine.sendStop();
+    m_uiState = UIState::EDITING;
+    m_editPiece = {};              // 默认选橡皮擦
+    m_selRow = m_selCol = -1;
+    m_legalMoves.clear();
+    m_currentMoveStartTime = 0;   // 暂停计时
+    m_message = "棋局编辑模式: 左键放置, 右键删除";
+    m_messageTime = SDL_GetTicks();
+}
+
+void GUI::exitEditMode() {
+    m_uiState = UIState::NORMAL;
+    m_editPiece = {};
+    m_moveHistory.clear();
+    m_hasLastMove = false;
+    m_viewIndex = -1;
+    m_noCaptureCount = 0;
+    m_redTimer = {};
+    m_blackTimer = {};
+    startMoveTimer();
+    m_message = "编辑完成，开始新局面";
+    m_messageTime = SDL_GetTicks();
+    // 通知引擎新局
+    if (m_engine.isRunning()) {
+        m_engine.sendNewGame();
+        m_engine.sendIsReady();
+    }
+    tryStartEngineMove();
+}
+
+void GUI::handleEditBoardClick(int row, int col, bool erase) {
+    if (row < 0 || row >= Board::ROWS || col < 0 || col >= Board::COLS) return;
+    if (erase || m_editPiece.empty()) {
+        m_board.set(row, col, Piece{});
+    } else {
+        m_board.set(row, col, m_editPiece);
+    }
+}
+
+int GUI::editPaletteHitTest(int x, int y) const {
+    return m_renderer.editPaletteHitTest(x, y);
+}
+
 void GUI::run() {
     m_running = true;
     SDL_Event ev;
@@ -1320,8 +1482,10 @@ void GUI::run() {
 
     while (m_running) {
         bool hasEvent = false;
-        // 引擎思考中需要频繁刷新显示信息，否则低频等待事件
-        if (m_engine.isThinking()) {
+        // 引擎思考中或游戏进行中（需要实时更新计时器），频繁刷新
+        bool gameActive = (m_uiState == UIState::NORMAL || m_uiState == UIState::EDITING)
+                          && m_currentMoveStartTime > 0;
+        if (m_engine.isThinking() || gameActive) {
             while (SDL_PollEvent(&ev)) {
                 handleEvent(ev);
                 hasEvent = true;

@@ -18,7 +18,13 @@ enum class UIState {
     NORMAL,
     SETTINGS,
     GAME_OVER,
-    FILE_BROWSER
+    FILE_BROWSER,
+    EDITING   // 棋局编辑模式
+};
+
+struct MoveTimer {
+    Uint32 totalMs   = 0;  // 累计用时（毫秒）
+    Uint32 lastMoveMs = 0; // 上一步用时
 };
 
 struct GameSettings {
@@ -165,6 +171,20 @@ private:
     // 获取当前显示的棋盘（浏览模式或实时）
     const Board& displayBoard() const;
     bool isViewingHistory() const { return m_viewIndex >= 0; }
+
+    // ---- 计时器 ----
+    MoveTimer m_redTimer, m_blackTimer;
+    Uint32 m_currentMoveStartTime = 0;  // 当前步开始时刻（SDL_GetTicks）
+    void startMoveTimer();
+    void stopMoveTimerAndRecord(Side side); // 结束该方计时，写入 timer
+
+    // ---- 棋局编辑 ----
+    Piece m_editPiece;  // 当前要放置的棋子（empty = 橡皮擦）
+    void enterEditMode();
+    void exitEditMode();
+    void handleEditBoardClick(int row, int col, bool erase); // 放/删棋子
+    // 编辑面板 hit-test: -1=nothing, 0..13=棋子选择, 14=橡皮擦, 15=清空, 16=还原, 17=完成
+    int editPaletteHitTest(int x, int y) const;
 
     // 窗口大小
     int m_windowW = 1050;
