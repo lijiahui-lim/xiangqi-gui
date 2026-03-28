@@ -172,6 +172,7 @@ void GUI::initButtons() {
 
 void GUI::newGame() {
     m_board.reset();
+    m_uiState = UIState::NORMAL;
     m_selRow = m_selCol = -1;
     m_legalMoves.clear();
     m_hasLastMove = false;
