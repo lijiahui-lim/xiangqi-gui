@@ -171,6 +171,12 @@ void GUI::initButtons() {
 }
 
 void GUI::newGame() {
+    // 如果正在分析或引擎思考，先停止
+    if (m_engine.isThinking()) {
+        m_ignoreNextBestMove = true;
+        m_engine.sendStop();
+    }
+    
     m_board.reset();
     m_uiState = UIState::NORMAL;
     m_selRow = m_selCol = -1;
@@ -304,10 +310,11 @@ void GUI::startAnalysis() {
     // 使用 sendStopForRestart 保证旧 bestmove 回复不会打断新的 go infinite
     m_engine.sendStopForRestart();
 
-    // 构造走法列表
+    // 构造走法列表（仅包含当前浏览位置前的走法）
     std::vector<std::string> uciMoves;
-    for (auto& mr : m_moveHistory)
-        uciMoves.push_back(Board::moveToUCI(mr.move));
+    size_t moveLimit = (m_viewIndex >= 0) ? m_viewIndex + 1 : m_moveHistory.size();
+    for (size_t i = 0; i < moveLimit && i < m_moveHistory.size(); i++)
+        uciMoves.push_back(Board::moveToUCI(m_moveHistory[i].move));
 
     std::string fen;
     if (m_moveHistory.empty())
@@ -327,8 +334,8 @@ void GUI::toggleAnalysisMode() {
         m_message = "分析模式: 开";
         m_messageTime = SDL_GetTicks();
         initButtons();
-        // 稍后启动分析
-        if (m_uiState != UIState::GAME_OVER && !isViewingHistory())
+        // 启动分析（支持浏览历史时分析）
+        if (m_uiState != UIState::GAME_OVER)
             startAnalysis();
     } else {
         // 退出分析模式
@@ -343,8 +350,9 @@ void GUI::toggleAnalysisMode() {
         m_message = "分析模式: 关";
         m_messageTime = SDL_GetTicks();
         initButtons();
-        // 如果轮到引擎走，恢复引擎走棋
-        tryStartEngineMove();
+        // 非浏览历史时，如果轮到引擎走，恢复引擎走棋
+        if (!isViewingHistory())
+            tryStartEngineMove();
     }
 }
 
@@ -426,7 +434,8 @@ void GUI::onEngineInfo(const EngineInfo& info) {
     m_pvArrow2.valid = false;
     if (!info.pv.empty()) {
         Board tmpBoard;
-        tmpBoard.fromFEN(m_board.toFEN());
+        const Board& cur = displayBoard();
+        tmpBoard.fromFEN(cur.toFEN());
         std::istringstream pvss(info.pv);
         std::string uci;
         int count = 0;
@@ -446,9 +455,10 @@ void GUI::onEngineInfo(const EngineInfo& info) {
 }
 
 std::string GUI::pvToReadable(const std::string& pv) const {
-    // 在临时棋盘上模拟走法，逐步转换
+    // 在临时棋盘上模拟走法，逐步转换（使用当前显示的棋盘，支持棋谱浏览）
     Board tmpBoard;
-    tmpBoard.fromFEN(m_board.toFEN());
+    const Board& cur = displayBoard();
+    tmpBoard.fromFEN(cur.toFEN());
 
     std::istringstream ss(pv);
     std::string uci;
@@ -1387,29 +1397,34 @@ void GUI::navigateTo(int index) {
     if (index < 0) {
         // 回到实时局面
         m_viewIndex = -1;
-        return;
+    } else {
+        index = std::min(index, (int)m_moveHistory.size() - 1);
+        m_viewIndex = index;
+
+        // 从初始局面重放到index
+        m_viewBoard.reset();
+        for (int i = 0; i <= index; i++) {
+            auto& rec = m_moveHistory[i];
+            m_viewBoard.makeMove(rec.move);
+            m_viewBoard.switchSide();
+        }
     }
-
-    index = std::min(index, (int)m_moveHistory.size() - 1);
-    m_viewIndex = index;
-
-    // 从初始局面重放到index
-    m_viewBoard.reset();
-    for (int i = 0; i <= index; i++) {
-        auto& rec = m_moveHistory[i];
-        m_viewBoard.makeMove(rec.move);
-        m_viewBoard.switchSide();
+    
+    // 分析模式下重新分析新位置
+    if (m_analysisMode && m_engine.isRunning()) {
+        startAnalysis();
     }
 }
 
 void GUI::navigateForward() {
     if (m_moveHistory.empty()) return;
     if (m_viewIndex < 0) return; // 已在实时局面
-    if (m_viewIndex >= (int)m_moveHistory.size() - 1) {
-        m_viewIndex = -1; // 回到实时
-        return;
+    int nextIdx = m_viewIndex + 1;
+    if (nextIdx >= (int)m_moveHistory.size()) {
+        navigateTo(-1); // 回到实时
+    } else {
+        navigateTo(nextIdx);
     }
-    navigateTo(m_viewIndex + 1);
 }
 
 void GUI::navigateBackward() {
