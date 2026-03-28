@@ -887,15 +887,26 @@ void GUI::handleMouseDown(int x, int y) {
                 m_settings.enginePlaysRed = !m_settings.enginePlaysRed;
                 m_message = m_settings.enginePlaysRed ? "引擎执红: 开" : "引擎执红: 关";
                 m_messageTime = SDL_GetTicks();
-                initButtons(); // 刷新按钮文字
-                tryStartEngineMove();
+                initButtons();
+                // 关闭后若引擎正在为已禁用的一方思考，立即停止
+                if (m_engine.isThinking() && !isEngineTurn() && !m_analysisMode) {
+                    m_ignoreNextBestMove = true;
+                    m_engine.sendStop();
+                } else {
+                    tryStartEngineMove();
+                }
                 break;
             case 5: // 引擎执黑
                 m_settings.enginePlaysBlack = !m_settings.enginePlaysBlack;
                 m_message = m_settings.enginePlaysBlack ? "引擎执黑: 开" : "引擎执黑: 关";
                 m_messageTime = SDL_GetTicks();
-                initButtons(); // 刷新按钮文字
-                tryStartEngineMove();
+                initButtons();
+                if (m_engine.isThinking() && !isEngineTurn() && !m_analysisMode) {
+                    m_ignoreNextBestMove = true;
+                    m_engine.sendStop();
+                } else {
+                    tryStartEngineMove();
+                }
                 break;
             case 6: // 设置
                 if (m_uiState == UIState::SETTINGS) {
@@ -1770,26 +1781,27 @@ void GUI::run() {
 
     while (m_running) {
         bool hasEvent = false;
-        // 引擎思考中或游戏进行中（需要实时更新计时器），频繁刷新
-        bool gameActive = (m_uiState == UIState::NORMAL || m_uiState == UIState::EDITING)
-                          && m_currentMoveStartTime > 0;
-        if (m_engine.isThinking() || gameActive) {
+        if (m_engine.isThinking()) {
+            // 引擎思考中：~20fps 刷新显示分析信息
             while (SDL_PollEvent(&ev)) {
                 handleEvent(ev);
                 hasEvent = true;
             }
             needRedraw = true;
-            SDL_Delay(50); // 思考中 ~20fps 足够显示信息更新
+            SDL_Delay(50);
         } else {
-            // 空闲时阻塞等待事件，最长 200ms 唤醒一次（处理消息超时等）
-            if (SDL_WaitEventTimeout(&ev, 200)) {
+            // 非思考时阻塞等待，最长 200ms 唤醒一次（更新计时器显示）
+            bool gotEvent = SDL_WaitEventTimeout(&ev, 200) != 0;
+            if (gotEvent) {
                 handleEvent(ev);
                 hasEvent = true;
-                // 处理同一帧内积压的其余事件
                 while (SDL_PollEvent(&ev))
                     handleEvent(ev);
                 needRedraw = true;
             }
+            // 游戏计时器每 200ms 刷新一次
+            if (m_currentMoveStartTime > 0)
+                needRedraw = true;
         }
 
         update();
