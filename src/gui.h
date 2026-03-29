@@ -42,6 +42,18 @@ struct GameSettings {
     bool mirrorBoard = false;  // 左右镜像
 };
 
+// SDL_USEREVENT codes: 1=bestmove, 2=engine info, 3=cloudbook result
+struct CloudBookEventData {
+    std::vector<CloudBookMove> moves;
+    std::string error;
+};
+
+// 编辑面板棋子顺序（索引 0-6 红，7-13 黑）
+inline const PieceType kPaletteOrder[] = {
+    PieceType::KING, PieceType::ADVISOR, PieceType::BISHOP,
+    PieceType::KNIGHT, PieceType::ROOK, PieceType::CANNON, PieceType::PAWN
+};
+
 class GUI {
 public:
     GUI();

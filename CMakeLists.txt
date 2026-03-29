@@ -15,9 +15,17 @@ add_executable(xiangqi
     src/board.cpp
     src/engine.cpp
     src/cloudbook.cpp
-    src/renderer.cpp
-    src/gui.cpp
-    src/rules.cpp
+    src/renderer_core.cpp
+    src/renderer_panel.cpp
+    src/renderer_edit.cpp
+    src/gui_core.cpp
+    src/gui_engine.cpp
+    src/gui_game.cpp
+    src/gui_ui.cpp
+    src/gui_filebrowser.cpp
+    src/gui_pgn.cpp
+    src/rules_core.cpp
+    src/rules_detect.cpp
 )
 
 target_include_directories(xiangqi PRIVATE
