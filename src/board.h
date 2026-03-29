@@ -58,9 +58,9 @@ public:
     void switchSide();
 
     // 走法合法性检查
-    bool isLegalMove(int fr, int fc, int tr, int tc) const;
+    bool isLegalMove(int fr, int fc, int tr, int tc);
     // 获取某棋子的所有合法走法
-    std::vector<Move> getLegalMoves(int row, int col) const;
+    std::vector<Move> getLegalMoves(int row, int col);
     // 执行走法
     void makeMove(const Move& move);
     // 撤销走法

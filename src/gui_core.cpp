@@ -54,12 +54,15 @@ void GUI::loadConfig() {
         while (!key.empty() && key.back() == ' ') key.pop_back();
         while (!val.empty() && val.front() == ' ') val.erase(val.begin());
 
+        auto safeStoi = [](const std::string& s, int def = 0) -> int {
+            try { return std::stoi(s); } catch (...) { return def; }
+        };
         if (key == "engine_path") m_settings.enginePath = val;
         else if (key == "nnue_path") m_settings.nnuePath = val;
-        else if (key == "search_depth") m_settings.searchDepth = std::stoi(val);
-        else if (key == "search_time") m_settings.searchTime = std::stoi(val);
-        else if (key == "threads") m_settings.threads = std::stoi(val);
-        else if (key == "hash_size") m_settings.hashSize = std::stoi(val);
+        else if (key == "search_depth") m_settings.searchDepth = safeStoi(val, 18);
+        else if (key == "search_time") m_settings.searchTime = safeStoi(val, 5000);
+        else if (key == "threads") m_settings.threads = safeStoi(val, 2);
+        else if (key == "hash_size") m_settings.hashSize = safeStoi(val, 128);
         else if (key == "use_cloud_book") m_settings.useCloudBook = (val == "1" || val == "true");
         else if (key == "human_side") {
             // 兼容旧配置
@@ -344,4 +347,14 @@ void GUI::render() {
         m_renderer.drawMessage(m_message);
 
     m_renderer.endFrame();
+}
+
+void GUI::queryCloudBook() {
+    if (!m_settings.useCloudBook || !m_cloudBook.isEnabled()) return;
+    m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+        SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+        ev.type = SDL_USEREVENT; ev.user.code = 3;
+        ev.user.data1 = new CloudBookEventData{moves, error};
+        if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
+    });
 }

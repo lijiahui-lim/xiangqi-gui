@@ -273,14 +273,7 @@ void GUI::onEngineBestMove(const std::string& uci) {
     if (!checkGameRules()) return;
 
     // 查询云库
-    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-            ev.type = SDL_USEREVENT; ev.user.code = 3;
-            ev.user.data1 = new CloudBookEventData{moves, error};
-            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
-        });
-    }
+    queryCloudBook();
 
     // 若下一方也由引擎控制，继续走
     // 走棋后清除旧箭头

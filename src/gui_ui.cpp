@@ -106,12 +106,7 @@ void GUI::handleMouseDown(int x, int y) {
                 m_cloudBook.setEnabled(m_settings.useCloudBook);
                 initButtons(); // 刷新按钮文字
                 if (m_settings.useCloudBook) {
-                    m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
-                        SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-                        ev.type = SDL_USEREVENT; ev.user.code = 3;
-                        ev.user.data1 = new CloudBookEventData{moves, error};
-                        if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
-                    });
+                    queryCloudBook();
                     m_message = "云库已开启";
                 } else {
                     m_message = "云库已关闭";

@@ -217,7 +217,7 @@ std::vector<Move> Board::genPawnMoves(int r, int c, Side s) const {
     return moves;
 }
 
-std::vector<Move> Board::getLegalMoves(int row, int col) const {
+std::vector<Move> Board::getLegalMoves(int row, int col) {
     Piece p = get(row, col);
     if (p.empty()) return {};
 
@@ -235,19 +235,18 @@ std::vector<Move> Board::getLegalMoves(int row, int col) const {
 
     // 过滤：走棋后不能被将军，且不能将帅照面
     std::vector<Move> legal;
-    Board* self = const_cast<Board*>(this);
     for (auto& m : raw) {
-        self->makeMove(m);
-        bool inCheck = self->isInCheck(p.side);
-        bool opposing = self->kingsOpposing();
-        self->undoMove(m);
+        makeMove(m);
+        bool inCheck = isInCheck(p.side);
+        bool opposing = kingsOpposing();
+        undoMove(m);
         if (!inCheck && !opposing)
             legal.push_back(m);
     }
     return legal;
 }
 
-bool Board::isLegalMove(int fr, int fc, int tr, int tc) const {
+bool Board::isLegalMove(int fr, int fc, int tr, int tc) {
     auto moves = getLegalMoves(fr, fc);
     for (auto& m : moves)
         if (m.toRow == tr && m.toCol == tc) return true;

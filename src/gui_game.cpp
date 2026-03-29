@@ -56,14 +56,7 @@ void GUI::newGame() {
     }
 
     // 查询云库
-    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-            ev.type = SDL_USEREVENT; ev.user.code = 3;
-            ev.user.data1 = new CloudBookEventData{moves, error};
-            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
-        });
-    }
+    queryCloudBook();
 }
 
 void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
@@ -112,14 +105,7 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
     if (!checkGameRules()) return;
 
     // 查询云库
-    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-            ev.type = SDL_USEREVENT; ev.user.code = 3;
-            ev.user.data1 = new CloudBookEventData{moves, error};
-            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
-        });
-    }
+    queryCloudBook();
 
     // 引擎走棋
     if (m_analysisMode) {
@@ -308,14 +294,7 @@ void GUI::undoLastMove() {
         m_uiState = UIState::NORMAL;
 
     // 查询云库
-    if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-            ev.type = SDL_USEREVENT; ev.user.code = 3;
-            ev.user.data1 = new CloudBookEventData{moves, error};
-            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
-        });
-    }
+    queryCloudBook();
 
     // 分析模式下重新分析
     if (m_analysisMode) {

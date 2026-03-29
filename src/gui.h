@@ -85,6 +85,9 @@ private:
     void undoLastMove();
     bool isEngineTurn() const;
 
+    // 云库查询（统一事件包装）
+    void queryCloudBook();
+
     // 引擎设置
     void applyEngineSettings();
     void loadEngine(const std::string& path);
