@@ -19,7 +19,12 @@ void GUI::applyEngineSettings() {
     }
 
     m_engine.setInfoCallback([this](const EngineInfo& info) {
-        // 通过SDL事件传递到主线程，避免跨线程访问棋盘数据
+        // 节流：每 100ms 最多推送一次 info 到主线程
+        static std::atomic<Uint32> lastInfoTime{0};
+        Uint32 now = SDL_GetTicks();
+        if (now - lastInfoTime.load(std::memory_order_relaxed) < 100) return;
+        lastInfoTime.store(now, std::memory_order_relaxed);
+
         SDL_Event ev{};
         ev.type = SDL_USEREVENT;
         ev.user.code = 2;
