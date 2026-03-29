@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <filesystem>
 
 // 规则脚本解释器
 // 规则文件格式:
@@ -76,6 +77,7 @@ class RuleEngine {
 public:
     void loadFromFile(const std::string& path);
     void reloadFromFile();
+    void reloadIfChanged();
 
     RuleResult evaluate(const GameState& state) const;
 
@@ -105,4 +107,5 @@ private:
 
     std::vector<ParsedRule> m_rules;
     std::string m_filePath;
+    std::filesystem::file_time_type m_lastModTime{};
 };

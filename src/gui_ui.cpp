@@ -376,9 +376,9 @@ void GUI::handleEvent(SDL_Event& ev) {
             break;
         case SDL_USEREVENT:
             if (ev.user.code == 1 && ev.user.data1) {
-                std::string bestmove((char*)ev.user.data1);
-                delete[] (char*)ev.user.data1;
-                onEngineBestMove(bestmove);
+                std::string* moveStr = (std::string*)ev.user.data1;
+                onEngineBestMove(*moveStr);
+                delete moveStr;
             } else if (ev.user.code == 2 && ev.user.data1) {
                 EngineInfo* info = (EngineInfo*)ev.user.data1;
                 onEngineInfo(*info);

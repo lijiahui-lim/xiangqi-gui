@@ -107,7 +107,19 @@ void RuleEngine::loadFromFile(const std::string& path) {
 void RuleEngine::reloadFromFile() {
     if (!m_filePath.empty()) {
         loadFromFile(m_filePath);
+        try { m_lastModTime = std::filesystem::last_write_time(m_filePath); } catch (...) {}
     }
+}
+
+void RuleEngine::reloadIfChanged() {
+    if (m_filePath.empty()) return;
+    try {
+        auto curMod = std::filesystem::last_write_time(m_filePath);
+        if (curMod != m_lastModTime) {
+            loadFromFile(m_filePath);
+            m_lastModTime = curMod;
+        }
+    } catch (...) {}
 }
 
 RuleResult RuleEngine::evaluate(const GameState& state) const {

@@ -20,8 +20,7 @@ void GUI::applyEngineSettings() {
 
     m_engine.setInfoCallback([this](const EngineInfo& info) {
         // 通过SDL事件传递到主线程，避免跨线程访问棋盘数据
-        SDL_Event ev;
-        SDL_memset(&ev, 0, sizeof(ev));
+        SDL_Event ev{};
         ev.type = SDL_USEREVENT;
         ev.user.code = 2;
         ev.user.data1 = new EngineInfo(info);
@@ -31,16 +30,12 @@ void GUI::applyEngineSettings() {
     });
     m_engine.setBestMoveCallback([this](const std::string& uci) {
         // 通过SDL事件传递到主线程
-        SDL_Event ev;
-        SDL_memset(&ev, 0, sizeof(ev));
+        SDL_Event ev{};
         ev.type = SDL_USEREVENT;
         ev.user.code = 1;
-        // 存bestmove字符串
-        char* data = new char[uci.size() + 1];
-        strcpy(data, uci.c_str());
-        ev.user.data1 = data;
+        ev.user.data1 = new std::string(uci);
         if (SDL_PushEvent(&ev) < 1) {
-            delete[] data;  // 推送失败时释放内存
+            delete (std::string*)ev.user.data1;
         }
     });
 }

@@ -116,8 +116,8 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
 }
 
 bool GUI::checkGameRules() {
-    // 动态读取：每次判定前都重载规则脚本
-    m_rules.reloadFromFile();
+    // 规则文件修改时自动重载
+    m_rules.reloadIfChanged();
 
     bool hasLegalMove = false;
     for (int r = 0; r < Board::ROWS && !hasLegalMove; r++) {
