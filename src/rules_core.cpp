@@ -36,7 +36,6 @@ const char* kDefaultRuleScript = R"RULES(# 中国象棋规则脚本
 #   in_check, has_legal_moves, no_capture_count, move_count, current_side, last_captured
 #   perpetual_check_count       — 连续将军循环中局面重复次数
 #   position_repeat_count       — 当前局面总重复次数（含当前）
-#   check_capture_cycle_count   — 一将一捉无根子循环次数
 #
 # 动作:
 #   checkmate  — 被将死/困毙
@@ -48,14 +47,6 @@ const char* kDefaultRuleScript = R"RULES(# 中国象棋规则脚本
 rule "循环长将警告"
 when in_check and perpetual_check_count >= 2
 action warn "循环长将! 请变招!"
-
-rule "一将一捉判负"
-when check_capture_cycle_count >= 3
-action win "一将一捉无根子违例!"
-
-rule "一将一捉警告"
-when check_capture_cycle_count >= 2
-action warn "一将一捉! 请变招!"
 
 rule "被将军必须应将"
 when in_check and (not has_legal_moves)
@@ -273,7 +264,6 @@ double RuleEngine::getVar(const std::string& name, const GameState& st) const {
     if (name == "last_captured") return st.lastCaptured ? 1.0 : 0.0;
     if (name == "perpetual_check_count") return (double)st.perpetualCheckCount;
     if (name == "position_repeat_count") return (double)st.positionRepeatCount;
-    if (name == "check_capture_cycle_count") return (double)st.checkCaptureCycleCount;
     return 0.0;
 }
 

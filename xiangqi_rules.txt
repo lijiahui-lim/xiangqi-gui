@@ -21,14 +21,6 @@ rule "循环长将警告"
 when in_check and perpetual_check_count >= 2
 action warn "循环长将! 请变招!"
 
-#rule "一将一捉判负"
-#when check_capture_cycle_count >= 3
-#action win "一将一捉无根子违例!"
-
-#rule "一将一捉警告"
-#when check_capture_cycle_count >= 2
-#action warn "一将一捉! 请变招!"
-
 rule "被将军必须应将"
 when in_check and (not has_legal_moves)
 action checkmate

@@ -54,7 +54,6 @@ struct GameState {
     bool lastCaptured = false;
     int perpetualCheckCount = 0;      // 连续将军循环中局面重复次数
     int positionRepeatCount = 0;      // 当前局面总重复次数（含当前）
-    int checkCaptureCycleCount = 0;   // 一将一捉无根子循环次数
 };
 
 struct ParsedRule {
@@ -79,9 +78,6 @@ public:
     void reloadFromFile();
 
     RuleResult evaluate(const GameState& state) const;
-
-    // 一将一捉无根子检测：分析最近的局面历史，返回循环次数
-    int detectCheckCaptureCycle(const std::vector<std::string>& posHistory) const;
 
     const std::vector<ParsedRule>& rules() const { return m_rules; }
     const std::string& filePath() const { return m_filePath; }

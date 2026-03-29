@@ -25,7 +25,6 @@ add_executable(xiangqi
     src/gui_filebrowser.cpp
     src/gui_pgn.cpp
     src/rules_core.cpp
-    src/rules_detect.cpp
 )
 
 target_include_directories(xiangqi PRIVATE

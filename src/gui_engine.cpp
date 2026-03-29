@@ -227,19 +227,10 @@ void GUI::onEngineBestMove(const std::string& uci) {
         bool shouldRetract = false;
         std::string retractReason;
 
-        // 1. 长将违例：局面重复 >= 2 次且对方被将军
-        if (repeatCount >= 2 && opponentInCheck) {
+        // 1. 长将违例：局面重复超过 6 次且对方被将军
+        if (repeatCount > 6 && opponentInCheck) {
             shouldRetract = true;
             retractReason = "引擎长将违例, 自动变招";
-        }
-
-        // 2. 一将一捉无根子违例
-        if (!shouldRetract) {
-            int ccCycle = m_rules.detectCheckCaptureCycle(m_positionHistory);
-            if (ccCycle >= 2) {
-                shouldRetract = true;
-                retractReason = "引擎一将一捉违例, 自动变招";
-            }
         }
 
         if (shouldRetract) {

@@ -197,7 +197,6 @@ bool GUI::checkGameRules() {
     st.lastCaptured = (!m_moveHistory.empty() && !m_moveHistory.back().move.captured.empty());
     st.perpetualCheckCount = perpetualCheckCount;
     st.positionRepeatCount = posRepeatCount;
-    st.checkCaptureCycleCount = m_rules.detectCheckCaptureCycle(m_positionHistory);
 
     RuleResult rr = m_rules.evaluate(st);
 
