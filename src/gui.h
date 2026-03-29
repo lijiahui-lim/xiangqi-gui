@@ -137,7 +137,9 @@ private:
 
     // 规则系统
     RuleEngine m_rules;
-    int m_noCaptureCount = 0;  // 连续无吃子步数
+    int m_noCaptureCount = 0;          // 连续无吃子步数
+    std::vector<std::string> m_positionHistory; // 每步走棋后的局面FEN（用于重复局面检测）
+    std::vector<std::string> m_engineBannedMoves; // 引擎违例后禁止的走法
     // 走棋后检查规则，返回true表示游戏继续，false表示游戏结束(和/负)
     bool checkGameRules();
 

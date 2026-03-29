@@ -110,8 +110,13 @@ void UCIEngine::sendPosition(const std::string& fen, const std::vector<std::stri
     sendCommand(cmd);
 }
 
-void UCIEngine::sendGo(int depth, int movetime, int wtime, int btime) {
+void UCIEngine::sendGo(int depth, int movetime, int wtime, int btime,
+                       const std::vector<std::string>& searchmoves) {
     std::string cmd = "go";
+    if (!searchmoves.empty()) {
+        cmd += " searchmoves";
+        for (const auto& m : searchmoves) cmd += " " + m;
+    }
     if (depth > 0) cmd += " depth " + std::to_string(depth);
     if (movetime > 0) cmd += " movetime " + std::to_string(movetime);
     if (wtime > 0) cmd += " wtime " + std::to_string(wtime);

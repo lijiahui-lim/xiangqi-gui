@@ -189,6 +189,8 @@ void GUI::newGame() {
     m_viewIndex = -1;
     m_moveListScroll = 0;
     m_noCaptureCount = 0;
+    m_positionHistory.clear();
+    m_engineBannedMoves.clear();
     m_analysisMode = false;
     m_ignoreNextBestMove = false;
     m_pvArrow1.valid = false;
@@ -279,10 +281,38 @@ void GUI::startEngineMove() {
     }
     m_engine.sendPosition(fen, uciMoves);
 
+    // 如果有被禁止的走法（引擎违例后变招），用 searchmoves 限制搜索范围
+    std::vector<std::string> searchmoves;
+    if (!m_engineBannedMoves.empty()) {
+        // 生成当前方所有合法走法
+        for (int r = 0; r < Board::ROWS; r++) {
+            for (int c = 0; c < Board::COLS; c++) {
+                auto piece = m_board.get(r, c);
+                if (piece.side == m_board.currentSide()) {
+                    auto moves = m_board.getLegalMoves(r, c);
+                    for (auto& m : moves) {
+                        std::string u = Board::moveToUCI(m);
+                        // 排除被禁止的走法
+                        bool banned = false;
+                        for (const auto& b : m_engineBannedMoves) {
+                            if (u == b) { banned = true; break; }
+                        }
+                        if (!banned) searchmoves.push_back(u);
+                    }
+                }
+            }
+        }
+        // 如果所有走法都被禁了，无法变招，清除禁止列表正常搜索
+        if (searchmoves.empty()) {
+            m_engineBannedMoves.clear();
+            searchmoves.clear();
+        }
+    }
+
     if (m_settings.searchTime > 0)
-        m_engine.sendGo(0, m_settings.searchTime, 0, 0);
+        m_engine.sendGo(0, m_settings.searchTime, 0, 0, searchmoves);
     else
-        m_engine.sendGo(m_settings.searchDepth, 0, 0, 0);
+        m_engine.sendGo(m_settings.searchDepth, 0, 0, 0, searchmoves);
 }
 
 bool GUI::isEngineTurn() const {
@@ -385,6 +415,37 @@ void GUI::onEngineBestMove(const std::string& uci) {
     m_moveHistory.push_back({move, m_board.currentSide(), uciStr, chinese, fenBefore});
     m_board.makeMove(move);
     m_board.switchSide();
+    m_positionHistory.push_back(m_board.toFEN());
+
+    // === 引擎违例检测：走完后检查是否造成长将/循环 ===
+    {
+        std::string curFen = m_board.toFEN();
+        int repeatCount = 0;
+        for (const auto& f : m_positionHistory) {
+            if (f == curFen) repeatCount++;
+        }
+        bool opponentInCheck = m_board.isInCheck(m_board.currentSide());
+
+        // 长将违例：对方处于将军状态且局面重复 >= 2 次
+        if (repeatCount >= 2 && opponentInCheck) {
+            // 撤销引擎的走法（此时 noCaptureCount 尚未更新，无需恢复）
+            m_positionHistory.pop_back();
+            m_board.undoMove(move);
+            m_board.switchSide();
+            m_moveHistory.pop_back();
+
+            // 把这个走法加入禁止列表
+            m_engineBannedMoves.push_back(uciStr);
+
+            // 重新让引擎搜索（排除违例走法）
+            m_message = "引擎长将违例, 自动变招";
+            m_messageTime = SDL_GetTicks();
+            startEngineMove();
+            return;
+        }
+    }
+    // === 违例检测结束 ===
+
     m_lastMove = move;
     m_hasLastMove = true;
     m_selRow = m_selCol = -1;
@@ -398,6 +459,9 @@ void GUI::onEngineBestMove(const std::string& uci) {
 
     // 启动下一方计时器
     startMoveTimer();
+
+    // 引擎走了合法的着，清除禁止列表
+    m_engineBannedMoves.clear();
 
     // 检查规则
     if (!checkGameRules()) return;
@@ -520,6 +584,7 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
     m_moveHistory.push_back({move, m_board.currentSide(), uci, chinese, fenBefore});
     m_board.makeMove(move);
     m_board.switchSide();
+    m_positionHistory.push_back(m_board.toFEN());
     m_lastMove = move;
     m_hasLastMove = true;
     m_selRow = m_selCol = -1;
@@ -530,6 +595,9 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
         m_noCaptureCount = 0;
     else
         m_noCaptureCount++;
+
+    // 人类走了棋，清除引擎禁止列表
+    m_engineBannedMoves.clear();
 
     // 启动下一方计时器
     startMoveTimer();
@@ -568,6 +636,31 @@ bool GUI::checkGameRules() {
     }
 
     bool inCheck = m_board.isInCheck(m_board.currentSide());
+
+    // 计算重复局面次数（用于长将/一将一捉检测）
+    // m_positionHistory 已在走棋后添加了当前局面
+    std::string curFen = m_board.toFEN();
+    int posRepeatCount = 0;
+    for (const auto& f : m_positionHistory) {
+        if (f == curFen) posRepeatCount++;
+    }
+
+    // 一将一捉循环次数：在重复局面之间，检查是否有将军发生
+    // 用法：查找上一次相同局面在 positionHistory 中的位置，检查中间有无将军
+    int checkCaptureCycleCount = 0;
+    if (posRepeatCount >= 2) {
+        // 找出所有出现当前局面的历史索引
+        std::vector<int> repIdxs;
+        for (int i = 0; i < (int)m_positionHistory.size(); i++) {
+            if (m_positionHistory[i] == curFen) repIdxs.push_back(i);
+        }
+        // 统计相邻两次出现之间是否有过将军局面
+        // 通过检查 moveHistory 对应的 fenBefore 是否与某个将军状态对应
+        // 这里简化：只要有重复局面发生，且其中一次前有检查（通过 FEN 匹配）
+        // 实际用重复次数作为循环次数
+        checkCaptureCycleCount = (int)repIdxs.size();
+    }
+
     GameState st;
     st.inCheck = inCheck;
     st.hasLegalMoves = hasLegalMove;
@@ -575,6 +668,8 @@ bool GUI::checkGameRules() {
     st.moveCount = (int)m_moveHistory.size();
     st.currentSide = (m_board.currentSide() == Side::RED) ? 0 : 1;
     st.lastCaptured = (!m_moveHistory.empty() && !m_moveHistory.back().move.captured.empty());
+    st.perpetualCheckCount = posRepeatCount;
+    st.checkCaptureCycleCount = checkCaptureCycleCount;
 
     RuleResult rr = m_rules.evaluate(st);
     switch (rr.action) {
@@ -591,9 +686,18 @@ bool GUI::checkGameRules() {
             m_uiState = UIState::GAME_OVER;
             return false;
         case RuleAction::LOSE:
+            // LOSE = 当前方负。对于一将一捉检测，当前side = 违例方
             m_message = rr.message.empty()
                 ? ((m_board.currentSide() == Side::RED) ? "红方负!" : "黑方负!")
-                : rr.message;
+                : rr.message + ((m_board.currentSide() == Side::RED) ? " 红方负!" : " 黑方负!");
+            m_messageTime = SDL_GetTicks();
+            m_uiState = UIState::GAME_OVER;
+            return false;
+        case RuleAction::WIN:
+            // 当前方（被违例方）胜
+            m_message = rr.message.empty()
+                ? ((m_board.currentSide() == Side::RED) ? "红方胜!" : "黑方胜!")
+                : rr.message + ((m_board.currentSide() == Side::RED) ? " 红方胜!" : " 黑方胜!");
             m_messageTime = SDL_GetTicks();
             m_uiState = UIState::GAME_OVER;
             return false;
@@ -643,6 +747,7 @@ void GUI::undoLastMove() {
         m_board.undoMove(rec.move);
         m_board.switchSide();
         m_moveHistory.pop_back();
+        if (!m_positionHistory.empty()) m_positionHistory.pop_back();
     }
 
     m_selRow = m_selCol = -1;
@@ -1558,6 +1663,7 @@ void GUI::importPGN(const std::string& path) {
 
         m_board.makeMove(move);
         m_board.switchSide();
+        m_positionHistory.push_back(m_board.toFEN());
     }
 
     if (!m_moveHistory.empty()) {

@@ -43,7 +43,8 @@ public:
     void sendIsReady();
     void sendNewGame();
     void sendPosition(const std::string& fen, const std::vector<std::string>& moves = {});
-    void sendGo(int depth = 0, int movetime = 0, int wtime = 0, int btime = 0);
+    void sendGo(int depth = 0, int movetime = 0, int wtime = 0, int btime = 0,
+                const std::vector<std::string>& searchmoves = {});
     void sendStop();
     void sendStopForRestart();  // 将要重新分析时调用，使 bestmove 回复不重置 m_thinking
     void sendQuit();

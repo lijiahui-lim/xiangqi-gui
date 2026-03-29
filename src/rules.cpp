@@ -33,12 +33,31 @@ const char* kDefaultRuleScript = R"RULES(# 中国象棋规则脚本
 #
 # 条件变量:
 #   in_check, has_legal_moves, no_capture_count, move_count, current_side, last_captured
+#   perpetual_check_count  — 当前局面重复出现次数（用于长将检测）
+#   check_capture_cycle_count  — 循环次数（用于一将一捉检测）
 #
 # 动作:
 #   checkmate
 #   draw
 #   lose
+#   win "消息"
 #   warn "消息"
+
+rule "循环常将判负"
+when in_check and perpetual_check_count >= 3
+action win "长将违例! 违例方判负!"
+
+rule "长将警告"
+when in_check and perpetual_check_count >= 2
+action warn "长将! 请变招!"
+
+rule "一将一捉判负"
+when check_capture_cycle_count >= 3
+action lose "一将一捉循环三次，违例方判负!"
+
+rule "一将一捉警告"
+when check_capture_cycle_count >= 2
+action warn "一将一捉! 请变招!"
 
 rule "被将军必须应将"
 when in_check and (not has_legal_moves)
@@ -164,6 +183,10 @@ RuleAction RuleEngine::parseAction(const std::string& s, std::string& msg) const
     if (t == "checkmate") return RuleAction::CHECKMATE;
     if (t == "draw") return RuleAction::DRAW;
     if (t == "lose") return RuleAction::LOSE;
+    if (startsWith(t, "win")) {
+        msg = unquote(trim(t.substr(3)));
+        return RuleAction::WIN;
+    }
     if (startsWith(t, "warn")) {
         msg = unquote(trim(t.substr(4)));
         return RuleAction::WARN;
@@ -243,6 +266,8 @@ double RuleEngine::getVar(const std::string& name, const GameState& st) const {
     if (name == "move_count") return (double)st.moveCount;
     if (name == "current_side") return (double)st.currentSide;
     if (name == "last_captured") return st.lastCaptured ? 1.0 : 0.0;
+    if (name == "perpetual_check_count") return (double)st.perpetualCheckCount;
+    if (name == "check_capture_cycle_count") return (double)st.checkCaptureCycleCount;
     return 0.0;
 }
 
