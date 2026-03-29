@@ -358,6 +358,7 @@ void Board::fromFEN(const std::string& fen) {
         if (ch == '/') {
             r--;
             c = 0;
+            if (r < 0) break;
         } else if (std::isdigit(ch)) {
             c += ch - '0';
         } else {
@@ -389,6 +390,9 @@ Move Board::uciToMove(const std::string& uci, const Board& board) {
     int fr = uci[1] - '0';
     int tc = uci[2] - 'a';
     int tr = uci[3] - '0';
+    if (fc < 0 || fc >= COLS || fr < 0 || fr >= ROWS ||
+        tc < 0 || tc >= COLS || tr < 0 || tr >= ROWS)
+        return {-1,-1,-1,-1, {}};
     Piece cap = board.get(tr, tc);
     return {fr, fc, tr, tc, cap};
 }

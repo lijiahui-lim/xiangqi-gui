@@ -8,6 +8,12 @@
 
 namespace fs = std::filesystem;
 
+// SDL_USEREVENT codes: 1=bestmove, 2=engine info, 3=cloudbook result
+struct CloudBookEventData {
+    std::vector<CloudBookMove> moves;
+    std::string error;
+};
+
 namespace {
 // 编辑面板棋子顺序（索引 0-6 红，7-13 黑）
 static const PieceType kPaletteOrder[] = {
@@ -232,8 +238,11 @@ void GUI::newGame() {
 
     // 查询云库
     if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            onCloudBookResult(moves, error);
+        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+            ev.type = SDL_USEREVENT; ev.user.code = 3;
+            ev.user.data1 = new CloudBookEventData{moves, error};
+            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
         });
     }
 }
@@ -255,18 +264,29 @@ void GUI::applyEngineSettings() {
     }
 
     m_engine.setInfoCallback([this](const EngineInfo& info) {
-        onEngineInfo(info);
+        // 通过SDL事件传递到主线程，避免跨线程访问棋盘数据
+        SDL_Event ev;
+        SDL_memset(&ev, 0, sizeof(ev));
+        ev.type = SDL_USEREVENT;
+        ev.user.code = 2;
+        ev.user.data1 = new EngineInfo(info);
+        if (SDL_PushEvent(&ev) < 1) {
+            delete (EngineInfo*)ev.user.data1;
+        }
     });
     m_engine.setBestMoveCallback([this](const std::string& uci) {
         // 通过SDL事件传递到主线程
         SDL_Event ev;
+        SDL_memset(&ev, 0, sizeof(ev));
         ev.type = SDL_USEREVENT;
         ev.user.code = 1;
         // 存bestmove字符串
         char* data = new char[uci.size() + 1];
         strcpy(data, uci.c_str());
         ev.user.data1 = data;
-        SDL_PushEvent(&ev);
+        if (SDL_PushEvent(&ev) < 1) {
+            delete[] data;  // 推送失败时释放内存
+        }
     });
 }
 
@@ -508,8 +528,11 @@ void GUI::onEngineBestMove(const std::string& uci) {
 
     // 查询云库
     if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            onCloudBookResult(moves, error);
+        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+            ev.type = SDL_USEREVENT; ev.user.code = 3;
+            ev.user.data1 = new CloudBookEventData{moves, error};
+            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
         });
     }
 
@@ -521,8 +544,6 @@ void GUI::onEngineBestMove(const std::string& uci) {
 }
 
 void GUI::onEngineInfo(const EngineInfo& info) {
-    std::lock_guard<std::mutex> lock(m_infoMutex);
-
     // 等待丢弃 bestmove 期间忽略残留的 info，防止箭头重新出现
     if (m_ignoreNextBestMove) return;
 
@@ -590,7 +611,6 @@ std::string GUI::pvToReadable(const std::string& pv) const {
 }
 
 void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error) {
-    std::lock_guard<std::mutex> lock(m_infoMutex);
     if (!error.empty()) {
         m_cloudErrorText = error;
         m_cloudMoves.clear();
@@ -598,7 +618,7 @@ void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::
     }
     m_cloudMoves = moves;
     m_cloudErrorText.clear();
-    // 把UCI走法转换为中文记法存入note字段
+    // 把UCI走法转换为中文记法存入note字段（主线程安全访问 m_board）
     for (auto& cm : m_cloudMoves) {
         cm.note = uciToChineseNotation(cm.move, m_board);
     }
@@ -649,10 +669,13 @@ void GUI::makeHumanMove(int fromR, int fromC, int toR, int toC) {
     // 检查规则
     if (!checkGameRules()) return;
 
-    // 云库查询
+    // 查询云库
     if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            onCloudBookResult(moves, error);
+        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+            ev.type = SDL_USEREVENT; ev.user.code = 3;
+            ev.user.data1 = new CloudBookEventData{moves, error};
+            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
         });
     }
 
@@ -845,8 +868,11 @@ void GUI::undoLastMove() {
 
     // 查询云库
     if (m_settings.useCloudBook && m_cloudBook.isEnabled()) {
-        m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
-            onCloudBookResult(moves, error);
+        m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+            ev.type = SDL_USEREVENT; ev.user.code = 3;
+            ev.user.data1 = new CloudBookEventData{moves, error};
+            if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
         });
     }
 
@@ -1157,8 +1183,11 @@ void GUI::handleMouseDown(int x, int y) {
                 m_cloudBook.setEnabled(m_settings.useCloudBook);
                 initButtons(); // 刷新按钮文字
                 if (m_settings.useCloudBook) {
-                    m_cloudBook.query(m_board.toFEN(), [this](const std::vector<CloudBookMove>& moves, const std::string& error) {
-                        onCloudBookResult(moves, error);
+                    m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+                        SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+                        ev.type = SDL_USEREVENT; ev.user.code = 3;
+                        ev.user.data1 = new CloudBookEventData{moves, error};
+                        if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
                     });
                     m_message = "云库已开启";
                 } else {
@@ -1432,6 +1461,14 @@ void GUI::handleEvent(SDL_Event& ev) {
                 std::string bestmove((char*)ev.user.data1);
                 delete[] (char*)ev.user.data1;
                 onEngineBestMove(bestmove);
+            } else if (ev.user.code == 2 && ev.user.data1) {
+                EngineInfo* info = (EngineInfo*)ev.user.data1;
+                onEngineInfo(*info);
+                delete info;
+            } else if (ev.user.code == 3 && ev.user.data1) {
+                auto* cbd = (CloudBookEventData*)ev.user.data1;
+                onCloudBookResult(cbd->moves, cbd->error);
+                delete cbd;
             }
             break;
     }
@@ -1486,12 +1523,8 @@ void GUI::render() {
 
     // PV 箭头（引擎思考或分析模式时，棋谱浏览/编辑模式下不显示）
     if (m_uiState != UIState::EDITING && !isViewingHistory()) {
-        PVArrow a1, a2;
-        {
-            std::lock_guard<std::mutex> lock(m_infoMutex);
-            a1 = m_pvArrow1;
-            a2 = m_pvArrow2;
-        }
+        PVArrow a1 = m_pvArrow1;
+        PVArrow a2 = m_pvArrow2;
         Side cur = dispBoard.currentSide();
         if (a1.valid)
             m_renderer.drawPVArrow(a1.move, a1.side, a1.side == cur,
@@ -1505,7 +1538,6 @@ void GUI::render() {
     if (m_uiState == UIState::EDITING) {
         m_renderer.drawEditPalette(m_editPiece, m_editFirstSide);
     } else {
-        std::lock_guard<std::mutex> lock(m_infoMutex);
         m_renderer.drawSidePanel(m_engine.getEngineName(), m_engineInfoText,
                                   m_cloudMoves, m_cloudErrorText, dispBoard.currentSide(),
                                   m_engine.isThinking());

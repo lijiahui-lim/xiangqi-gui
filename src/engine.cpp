@@ -16,8 +16,12 @@ bool UCIEngine::start(const std::string& path) {
     if (m_running) stop();
 
     int toEngine[2], fromEngine[2];
-    if (pipe(toEngine) < 0 || pipe(fromEngine) < 0)
+    if (pipe(toEngine) < 0)
         return false;
+    if (pipe(fromEngine) < 0) {
+        close(toEngine[0]); close(toEngine[1]);
+        return false;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
