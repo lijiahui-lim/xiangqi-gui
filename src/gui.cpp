@@ -499,6 +499,10 @@ void GUI::onEngineBestMove(const std::string& uci) {
 
 void GUI::onEngineInfo(const EngineInfo& info) {
     std::lock_guard<std::mutex> lock(m_infoMutex);
+
+    // 退出分析模式后忽略残留的 info，防止箭头重新出现
+    if (!m_analysisMode && m_ignoreNextBestMove) return;
+
     std::ostringstream oss;
     oss << "深度: " << info.depth;
     if (info.isMate)
