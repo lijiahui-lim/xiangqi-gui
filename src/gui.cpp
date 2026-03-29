@@ -1048,6 +1048,9 @@ void GUI::handleMouseDown(int x, int y) {
                 if (m_engine.isThinking() && !isEngineTurn() && !m_analysisMode) {
                     m_ignoreNextBestMove = true;
                     m_engine.sendStop();
+                    m_pvArrow1.valid = false;
+                    m_pvArrow2.valid = false;
+                    m_engineInfoText.clear();
                 } else {
                     tryStartEngineMove();
                 }
@@ -1060,6 +1063,9 @@ void GUI::handleMouseDown(int x, int y) {
                 if (m_engine.isThinking() && !isEngineTurn() && !m_analysisMode) {
                     m_ignoreNextBestMove = true;
                     m_engine.sendStop();
+                    m_pvArrow1.valid = false;
+                    m_pvArrow2.valid = false;
+                    m_engineInfoText.clear();
                 } else {
                     tryStartEngineMove();
                 }
