@@ -107,8 +107,15 @@ bool GUI::init() {
     // 先加载配置文件
     loadConfig();
 
-    // 加载规则文件
-    m_rules.loadFromFile("xiangqi_rules.txt");
+    // 加载规则文件：优先从源码根目录（exe上级）加载，其次当前目录
+    {
+        fs::path exeDir = fs::canonical("/proc/self/exe").parent_path();
+        fs::path rootRules = exeDir.parent_path() / "xiangqi_rules.txt";
+        if (fs::exists(rootRules))
+            m_rules.loadFromFile(rootRules.string());
+        else
+            m_rules.loadFromFile("xiangqi_rules.txt");
+    }
 
     // 配置文件中没有引擎路径时自动检测
     if (m_settings.enginePath.empty() || !fs::exists(m_settings.enginePath)) {

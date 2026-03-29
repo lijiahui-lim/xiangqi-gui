@@ -1,0 +1,50 @@
+# 中国象棋规则脚本
+# 语法:
+#   rule "规则名"
+#   when <条件表达式>
+#   action <动作>
+#
+# 条件变量:
+#   in_check, has_legal_moves, no_capture_count, move_count, current_side, last_captured
+#   perpetual_check_count       — 连续将军循环中局面重复次数
+#   position_repeat_count       — 当前局面总重复次数（含当前）
+#   check_capture_cycle_count   — 一将一捉无根子循环次数
+#
+# 动作:
+#   checkmate  — 被将死/困毙
+#   draw       — 和棋
+#   lose       — 当前方负
+#   win "消息" — 当前方胜
+#   warn "消息" — 显示提示
+
+rule "循环长将警告"
+when in_check and perpetual_check_count >= 2
+action warn "循环长将! 请变招!"
+
+rule "一将一捉判负"
+when check_capture_cycle_count >= 3
+action win "一将一捉无根子违例!"
+
+rule "一将一捉警告"
+when check_capture_cycle_count >= 2
+action warn "一将一捉! 请变招!"
+
+rule "被将军必须应将"
+when in_check and (not has_legal_moves)
+action checkmate
+
+rule "困毙"
+when (not in_check) and (not has_legal_moves)
+action checkmate
+
+rule "三次重复和棋"
+when position_repeat_count >= 3
+action draw
+
+rule "60步不吃子和棋"
+when no_capture_count >= 120
+action draw
+
+rule "将军提示"
+when in_check and has_legal_moves
+action warn "将军! 必须应将!"
