@@ -7,7 +7,10 @@
 CloudBook::CloudBook() {}
 
 CloudBook::~CloudBook() {
-    cancelQuery();
+    m_cancel = true;
+    if (m_thread.joinable())
+        m_thread.join();
+    m_querying = false;
 }
 
 static size_t writeCallback(void* contents, size_t size, size_t nmemb, void* userp) {
@@ -140,15 +143,12 @@ void CloudBook::query(const std::string& fen, Callback cb) {
         m_querying = false;
         if (!m_cancel && cb) cb(results, error);
     });
-
-    if (m_thread.joinable()) m_thread.detach();
 }
+
 
 void CloudBook::cancelQuery() {
     m_cancel = true;
-    // 线程会自行结束
-    if (m_thread.joinable()) {
-        m_thread.detach();
-    }
+    if (m_thread.joinable())
+        m_thread.join();
     m_querying = false;
 }

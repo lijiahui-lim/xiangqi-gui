@@ -72,13 +72,16 @@ void UCIEngine::stop() {
         m_readThread.join();
 
     if (m_pid > 0) {
-        int status;
-        waitpid(m_pid, &status, WNOHANG);
-        if (!WIFEXITED(status)) {
+        int status = 0;
+        pid_t ret = waitpid(m_pid, &status, WNOHANG);
+        if (ret == 0) {
+            // 引擎进程仍在运行，强制终止
             kill(m_pid, SIGTERM);
             usleep(100000);
-            kill(m_pid, SIGKILL);
-            waitpid(m_pid, &status, 0);
+            if (waitpid(m_pid, &status, WNOHANG) == 0) {
+                kill(m_pid, SIGKILL);
+                waitpid(m_pid, &status, 0);
+            }
         }
         m_pid = -1;
     }

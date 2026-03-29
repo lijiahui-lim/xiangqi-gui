@@ -10,29 +10,28 @@ void GUI::loadEngine(const std::string& path) {
         m_engine.sendStop();
         m_engine.stop();
     }
-    m_settings.enginePath = path;
-
-    // 自动查找同目录下的 nnue 文件
-    fs::path engineDir = fs::path(path).parent_path().parent_path();
-    for (auto& entry : fs::directory_iterator(engineDir)) {
-        if (entry.path().extension() == ".nnue") {
-            m_settings.nnuePath = entry.path().string();
-            break;
-        }
-    }
 
     if (m_engine.start(path)) {
+        m_settings.enginePath = path;
+
+        // 自动查找同目录下的 nnue 文件
+        fs::path engineDir = fs::path(path).parent_path().parent_path();
+        for (auto& entry : fs::directory_iterator(engineDir)) {
+            if (entry.path().extension() == ".nnue") {
+                m_settings.nnuePath = entry.path().string();
+                break;
+            }
+        }
+
         applyEngineSettings();
         m_engine.sendNewGame();
         m_engine.sendIsReady();
         m_message = "引擎已加载: " + fs::path(path).filename().string();
+        saveConfig();
     } else {
         m_message = "引擎加载失败!";
     }
     m_messageTime = SDL_GetTicks();
-
-    // 加载引擎后保存配置
-    saveConfig();
 }
 
 void GUI::openEngineFileDialog() {
