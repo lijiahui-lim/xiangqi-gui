@@ -1,4 +1,5 @@
 #include "rules.h"
+#include "board.h"
 #include <fstream>
 #include <sstream>
 #include <cctype>
@@ -33,27 +34,24 @@ const char* kDefaultRuleScript = R"RULES(# 中国象棋规则脚本
 #
 # 条件变量:
 #   in_check, has_legal_moves, no_capture_count, move_count, current_side, last_captured
-#   perpetual_check_count  — 当前局面重复出现次数（用于长将检测）
-#   check_capture_cycle_count  — 循环次数（用于一将一捉检测）
+#   perpetual_check_count       — 连续将军循环中局面重复次数
+#   position_repeat_count       — 当前局面总重复次数（含当前）
+#   check_capture_cycle_count   — 一将一捉无根子循环次数
 #
 # 动作:
-#   checkmate
-#   draw
-#   lose
-#   win "消息"
-#   warn "消息"
+#   checkmate  — 被将死/困毙
+#   draw       — 和棋
+#   lose       — 当前方负
+#   win "消息" — 当前方胜
+#   warn "消息" — 显示提示
 
-rule "循环常将判负"
-when in_check and perpetual_check_count >= 3
-action win "长将违例! 违例方判负!"
-
-rule "长将警告"
+rule "循环长将警告"
 when in_check and perpetual_check_count >= 2
-action warn "长将! 请变招!"
+action warn "循环长将! 请变招!"
 
 rule "一将一捉判负"
 when check_capture_cycle_count >= 3
-action lose "一将一捉循环三次，违例方判负!"
+action win "一将一捉无根子违例!"
 
 rule "一将一捉警告"
 when check_capture_cycle_count >= 2
@@ -62,6 +60,14 @@ action warn "一将一捉! 请变招!"
 rule "被将军必须应将"
 when in_check and (not has_legal_moves)
 action checkmate
+
+rule "困毙"
+when (not in_check) and (not has_legal_moves)
+action checkmate
+
+rule "三次重复和棋"
+when position_repeat_count >= 3
+action draw
 
 rule "60步不吃子和棋"
 when no_capture_count >= 120
@@ -267,6 +273,7 @@ double RuleEngine::getVar(const std::string& name, const GameState& st) const {
     if (name == "current_side") return (double)st.currentSide;
     if (name == "last_captured") return st.lastCaptured ? 1.0 : 0.0;
     if (name == "perpetual_check_count") return (double)st.perpetualCheckCount;
+    if (name == "position_repeat_count") return (double)st.positionRepeatCount;
     if (name == "check_capture_cycle_count") return (double)st.checkCaptureCycleCount;
     return 0.0;
 }
@@ -426,4 +433,106 @@ CondNode RuleEngine::pPrimary(const std::vector<Tok>& t, size_t& p) const {
 
     p++;
     return n;
+}
+
+// ========== 一将一捉无根子检测 ==========
+
+// 判断 (r,c) 处的棋子是否有根（被友方棋子保护）
+// 方法: 将该位置替换为敌方棋子，看友方能否吃到该格
+static bool isPieceProtected(Board& board, int r, int c) {
+    Piece target = board.get(r, c);
+    if (target.empty()) return false;
+    Side friendly = target.side;
+    Side enemy = (friendly == Side::RED) ? Side::BLACK : Side::RED;
+
+    // 临时替换为敌方兵/卒，这样友方的"吃子走法"就能覆盖此格
+    Piece saved = target;
+    board.set(r, c, {PieceType::PAWN, enemy});
+
+    bool defended = false;
+    for (int fr = 0; fr < Board::ROWS && !defended; fr++) {
+        for (int fc = 0; fc < Board::COLS && !defended; fc++) {
+            if (fr == r && fc == c) continue;
+            Piece p = board.get(fr, fc);
+            if (p.side != friendly) continue;
+            auto moves = board.getLegalMoves(fr, fc);
+            for (const auto& m : moves) {
+                if (m.toRow == r && m.toCol == c) {
+                    defended = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    board.set(r, c, saved);
+    return defended;
+}
+
+// 检测局面中进攻方（刚走完棋的一方）是否在"捉"对方的无根子
+// board 的 currentSide 是受害方（即将走棋方）
+static bool hasThreatenedUnprotectedPiece(Board& board) {
+    Side victim = board.currentSide();
+    Side attacker = (victim == Side::RED) ? Side::BLACK : Side::RED;
+
+    for (int fr = 0; fr < Board::ROWS; fr++) {
+        for (int fc = 0; fc < Board::COLS; fc++) {
+            Piece p = board.get(fr, fc);
+            if (p.side != attacker) continue;
+            auto moves = board.getLegalMoves(fr, fc);
+            for (const auto& m : moves) {
+                Piece target = board.get(m.toRow, m.toCol);
+                if (!target.empty() && target.side == victim &&
+                    target.type != PieceType::KING) {
+                    if (!isPieceProtected(board, m.toRow, m.toCol)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+int RuleEngine::detectCheckCaptureCycle(const std::vector<std::string>& posHistory) const {
+    int n = (int)posHistory.size();
+    if (n < 4) return 0;  // 至少需要 4 个半步才可能形成一个循环
+
+    // 分析进攻方的最近走法:
+    // posHistory[n-1], posHistory[n-3], posHistory[n-5] 是同一方（受害方）的局面
+    // 在这些局面中，进攻方刚走完棋
+    // 检查是否呈现: 将 + 捉 交替的模式
+
+    int checkCount = 0;
+    int captureCount = 0;
+    int analyzedCount = 0;
+
+    for (int k = 1; k <= 6 && (n - k) >= 0; k += 2) {
+        int idx = n - k;
+        Board b;
+        b.fromFEN(posHistory[idx]);
+        Side victim = b.currentSide();
+
+        bool inCheck = b.isInCheck(victim);
+        bool hasThreat = false;
+        if (!inCheck) {
+            hasThreat = hasThreatenedUnprotectedPiece(b);
+        }
+
+        if (inCheck) {
+            checkCount++;
+        } else if (hasThreat) {
+            captureCount++;
+        } else {
+            break;  // 模式中断
+        }
+        analyzedCount++;
+    }
+
+    // 一将一捉: 需要同时存在"将"和"捉无根子"
+    if (checkCount >= 1 && captureCount >= 1 && analyzedCount >= 2) {
+        return analyzedCount;  // 返回循环中的进攻步数
+    }
+
+    return 0;
 }

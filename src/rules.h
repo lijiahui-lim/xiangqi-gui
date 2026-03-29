@@ -15,8 +15,8 @@
 //   move_count              — 总步数/半步 (int)
 //   current_side            — 当前走棋方 ("red" / "black")
 //   last_captured           — 上一步是否吃子 (bool)
-//   perpetual_check_count   — 当前局面出现的重复次数 (用于长将检测)
-//   check_capture_cycle_count — 循环次数 (用于一将一捉检测)
+//   perpetual_check_count   — 连续将军循环中局面重复次数
+//   position_repeat_count   — 当前局面总重复出现次数（含当前）
 //
 // 支持的运算符:
 //   比较: >=  <=  ==  !=  >  <
@@ -52,8 +52,9 @@ struct GameState {
     int moveCount = 0;
     int currentSide = 0;              // 0=red, 1=black
     bool lastCaptured = false;
-    int perpetualCheckCount = 0;      // 当前局面在被将状态下重复出现的次数
-    int checkCaptureCycleCount = 0;   // 循环出现次数 (一将一捉)
+    int perpetualCheckCount = 0;      // 连续将军循环中局面重复次数
+    int positionRepeatCount = 0;      // 当前局面总重复次数（含当前）
+    int checkCaptureCycleCount = 0;   // 一将一捉无根子循环次数
 };
 
 struct ParsedRule {
@@ -78,6 +79,9 @@ public:
     void reloadFromFile();
 
     RuleResult evaluate(const GameState& state) const;
+
+    // 一将一捉无根子检测：分析最近的局面历史，返回循环次数
+    int detectCheckCaptureCycle(const std::vector<std::string>& posHistory) const;
 
     const std::vector<ParsedRule>& rules() const { return m_rules; }
     const std::string& filePath() const { return m_filePath; }

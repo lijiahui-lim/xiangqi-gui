@@ -417,7 +417,7 @@ void GUI::onEngineBestMove(const std::string& uci) {
     m_board.switchSide();
     m_positionHistory.push_back(m_board.toFEN());
 
-    // === 引擎违例检测：走完后检查是否造成长将/循环 ===
+    // === 引擎违例检测：长将 / 一将一捉无根子 ===
     {
         std::string curFen = m_board.toFEN();
         int repeatCount = 0;
@@ -426,8 +426,25 @@ void GUI::onEngineBestMove(const std::string& uci) {
         }
         bool opponentInCheck = m_board.isInCheck(m_board.currentSide());
 
-        // 长将违例：对方处于将军状态且局面重复 >= 2 次
+        bool shouldRetract = false;
+        std::string retractReason;
+
+        // 1. 长将违例：局面重复 >= 2 次且对方被将军
         if (repeatCount >= 2 && opponentInCheck) {
+            shouldRetract = true;
+            retractReason = "引擎长将违例, 自动变招";
+        }
+
+        // 2. 一将一捉无根子违例
+        if (!shouldRetract) {
+            int ccCycle = m_rules.detectCheckCaptureCycle(m_positionHistory);
+            if (ccCycle >= 2) {
+                shouldRetract = true;
+                retractReason = "引擎一将一捉违例, 自动变招";
+            }
+        }
+
+        if (shouldRetract) {
             // 撤销引擎的走法（此时 noCaptureCount 尚未更新，无需恢复）
             m_positionHistory.pop_back();
             m_board.undoMove(move);
@@ -438,7 +455,7 @@ void GUI::onEngineBestMove(const std::string& uci) {
             m_engineBannedMoves.push_back(uciStr);
 
             // 重新让引擎搜索（排除违例走法）
-            m_message = "引擎长将违例, 自动变招";
+            m_message = retractReason;
             m_messageTime = SDL_GetTicks();
             startEngineMove();
             return;
@@ -637,28 +654,46 @@ bool GUI::checkGameRules() {
 
     bool inCheck = m_board.isInCheck(m_board.currentSide());
 
-    // 计算重复局面次数（用于长将/一将一捉检测）
-    // m_positionHistory 已在走棋后添加了当前局面
+    // 计算当前局面重复次数
     std::string curFen = m_board.toFEN();
     int posRepeatCount = 0;
     for (const auto& f : m_positionHistory) {
         if (f == curFen) posRepeatCount++;
     }
 
-    // 一将一捉循环次数：在重复局面之间，检查是否有将军发生
-    // 用法：查找上一次相同局面在 positionHistory 中的位置，检查中间有无将军
-    int checkCaptureCycleCount = 0;
-    if (posRepeatCount >= 2) {
-        // 找出所有出现当前局面的历史索引
-        std::vector<int> repIdxs;
-        for (int i = 0; i < (int)m_positionHistory.size(); i++) {
-            if (m_positionHistory[i] == curFen) repIdxs.push_back(i);
+    // 计算长将循环次数：当前方被将军且局面重复时，
+    // 检查两次重复之间是否每步都在将军（即对方一直在将军我方）
+    int perpetualCheckCount = 0;
+    if (posRepeatCount >= 2 && inCheck) {
+        // 找到上一次出现此局面的位置
+        int lastRepeatIdx = -1;
+        for (int i = (int)m_positionHistory.size() - 2; i >= 0; i--) {
+            if (m_positionHistory[i] == curFen) {
+                lastRepeatIdx = i;
+                break;
+            }
         }
-        // 统计相邻两次出现之间是否有过将军局面
-        // 通过检查 moveHistory 对应的 fenBefore 是否与某个将军状态对应
-        // 这里简化：只要有重复局面发生，且其中一次前有检查（通过 FEN 匹配）
-        // 实际用重复次数作为循环次数
-        checkCaptureCycleCount = (int)repIdxs.size();
+        if (lastRepeatIdx >= 0) {
+            // 检查从 lastRepeatIdx+1 到当前（不含）的每步局面中，
+            // 被将军方（上一个走棋者/对方视角）是否每步都在被将
+            // 由于 positionHistory[i] 是第 i 步走完后的局面，
+            // currentSide 交替变化，我们只检查与当前方相同的局面是否都被将
+            bool allChecked = true;
+            Board tempBoard;
+            for (int i = lastRepeatIdx; i < (int)m_positionHistory.size(); i++) {
+                tempBoard.fromFEN(m_positionHistory[i]);
+                // 这个局面中当前要走的一方和我们当前一样时，检查是否被将
+                if (tempBoard.currentSide() == m_board.currentSide()) {
+                    if (!tempBoard.isInCheck(tempBoard.currentSide())) {
+                        allChecked = false;
+                        break;
+                    }
+                }
+            }
+            if (allChecked) {
+                perpetualCheckCount = posRepeatCount;
+            }
+        }
     }
 
     GameState st;
@@ -668,8 +703,9 @@ bool GUI::checkGameRules() {
     st.moveCount = (int)m_moveHistory.size();
     st.currentSide = (m_board.currentSide() == Side::RED) ? 0 : 1;
     st.lastCaptured = (!m_moveHistory.empty() && !m_moveHistory.back().move.captured.empty());
-    st.perpetualCheckCount = posRepeatCount;
-    st.checkCaptureCycleCount = checkCaptureCycleCount;
+    st.perpetualCheckCount = perpetualCheckCount;
+    st.positionRepeatCount = posRepeatCount;
+    st.checkCaptureCycleCount = m_rules.detectCheckCaptureCycle(m_positionHistory);
 
     RuleResult rr = m_rules.evaluate(st);
     switch (rr.action) {
