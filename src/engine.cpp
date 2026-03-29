@@ -62,6 +62,7 @@ bool UCIEngine::start(const std::string& path) {
 void UCIEngine::stop() {
     if (!m_running) return;
     m_running = false;
+    m_thinking = false;
 
     sendQuit();
 
@@ -157,6 +158,8 @@ void UCIEngine::readLoop() {
             parseLine(line);
         }
     }
+    // 引擎进程意外退出时重置思考标志
+    m_thinking = false;
 }
 
 void UCIEngine::parseLine(const std::string& line) {
