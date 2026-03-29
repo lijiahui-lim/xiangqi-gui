@@ -343,9 +343,9 @@ void GUI::tryStartEngineMove() {
 
 void GUI::startAnalysis() {
     if (!m_engine.isRunning()) return;
-    // 无论 m_thinking 状态如何，总是先 stop 再 go
-    // 使用 sendStopForRestart 保证旧 bestmove 回复不会打断新的 go infinite
-    m_engine.sendStopForRestart();
+    // 如果引擎正在思考，先停止旧搜索（用 sendStopForRestart 保证旧 bestmove 不会破坏状态）
+    if (m_engine.isThinking())
+        m_engine.sendStopForRestart();
 
     // 构造走法列表（仅包含当前浏览位置前的走法）
     std::vector<std::string> uciMoves;
@@ -366,8 +366,15 @@ void GUI::startAnalysis() {
 void GUI::toggleAnalysisMode() {
     m_analysisMode = !m_analysisMode;
     if (m_analysisMode) {
-        // 进入分析模式：停止当前引擎走棋，开始无限分析
-        if (m_engine.isThinking()) m_engine.sendStop();
+        // 进入分析模式
+        if (!m_engine.isRunning()) {
+            m_message = "引擎未运行，无法分析";
+            m_messageTime = SDL_GetTicks();
+            m_analysisMode = false;
+            return;
+        }
+        // 不要在这里手动 sendStop —— startAnalysis() 内部使用 sendStopForRestart()
+        // 可以正确保护 m_thinking 标志不被旧 bestmove 破坏
         m_message = "分析模式: 开";
         m_messageTime = SDL_GetTicks();
         initButtons();
@@ -376,20 +383,29 @@ void GUI::toggleAnalysisMode() {
             startAnalysis();
     } else {
         // 退出分析模式
-        if (m_engine.isThinking()) {
-            // 必须先设标志，再发 stop，防止引擎回复 bestmove 时错误执行走棋
-            m_ignoreNextBestMove = true;
-            m_engine.sendStop();
-        }
         m_engineInfoText.clear();
         m_pvArrow1.valid = false;
         m_pvArrow2.valid = false;
         m_message = "分析模式: 关";
         m_messageTime = SDL_GetTicks();
         initButtons();
+
+        // 判断是否需要立即启动新搜索
+        bool willRestart = !isViewingHistory() && m_uiState != UIState::GAME_OVER
+                           && isEngineTurn() && m_engine.isRunning();
+        if (m_engine.isThinking()) {
+            if (willRestart) {
+                // 将立即启动新搜索，用 sendStopForRestart 防止旧 bestmove 破坏 m_thinking
+                m_engine.sendStopForRestart();
+            } else {
+                // 仅停止，不重启
+                m_ignoreNextBestMove = true;
+                m_engine.sendStop();
+            }
+        }
         // 非浏览历史时，如果轮到引擎走，恢复引擎走棋
-        if (!isViewingHistory())
-            tryStartEngineMove();
+        if (willRestart)
+            startEngineMove();
     }
 }
 
@@ -507,8 +523,8 @@ void GUI::onEngineBestMove(const std::string& uci) {
 void GUI::onEngineInfo(const EngineInfo& info) {
     std::lock_guard<std::mutex> lock(m_infoMutex);
 
-    // 退出分析模式后忽略残留的 info，防止箭头重新出现
-    if (!m_analysisMode && m_ignoreNextBestMove) return;
+    // 等待丢弃 bestmove 期间忽略残留的 info，防止箭头重新出现
+    if (m_ignoreNextBestMove) return;
 
     std::ostringstream oss;
     oss << "深度: " << info.depth;
@@ -719,34 +735,48 @@ bool GUI::checkGameRules() {
     st.checkCaptureCycleCount = m_rules.detectCheckCaptureCycle(m_positionHistory);
 
     RuleResult rr = m_rules.evaluate(st);
+
+    // 游戏结束时的统一清理
+    auto enterGameOver = [&]() {
+        if (m_analysisMode) {
+            m_analysisMode = false;
+            initButtons();
+        }
+        if (m_engine.isThinking()) {
+            m_ignoreNextBestMove = true;
+            m_engine.sendStop();
+        }
+        m_pvArrow1.valid = false;
+        m_pvArrow2.valid = false;
+        m_engineInfoText.clear();
+        m_messageTime = SDL_GetTicks();
+        m_uiState = UIState::GAME_OVER;
+    };
+
     switch (rr.action) {
         case RuleAction::CHECKMATE:
             m_message = rr.message.empty()
                 ? ((m_board.currentSide() == Side::RED) ? "红方被将死! 黑方胜!" : "黑方被将死! 红方胜!")
                 : rr.message;
-            m_messageTime = SDL_GetTicks();
-            m_uiState = UIState::GAME_OVER;
+            enterGameOver();
             return false;
         case RuleAction::DRAW:
             m_message = rr.message.empty() ? "和棋!" : rr.message;
-            m_messageTime = SDL_GetTicks();
-            m_uiState = UIState::GAME_OVER;
+            enterGameOver();
             return false;
         case RuleAction::LOSE:
             // LOSE = 当前方负。对于一将一捉检测，当前side = 违例方
             m_message = rr.message.empty()
                 ? ((m_board.currentSide() == Side::RED) ? "红方负!" : "黑方负!")
                 : rr.message + ((m_board.currentSide() == Side::RED) ? " 红方负!" : " 黑方负!");
-            m_messageTime = SDL_GetTicks();
-            m_uiState = UIState::GAME_OVER;
+            enterGameOver();
             return false;
         case RuleAction::WIN:
             // 当前方（被违例方）胜
             m_message = rr.message.empty()
                 ? ((m_board.currentSide() == Side::RED) ? "红方胜!" : "黑方胜!")
                 : rr.message + ((m_board.currentSide() == Side::RED) ? " 红方胜!" : " 黑方胜!");
-            m_messageTime = SDL_GetTicks();
-            m_uiState = UIState::GAME_OVER;
+            enterGameOver();
             return false;
         case RuleAction::WARN:
             if (!rr.message.empty()) {
@@ -762,8 +792,7 @@ bool GUI::checkGameRules() {
     // 兜底：若规则文件未写终局规则，保持可玩性
     if (!hasLegalMove) {
         m_message = (m_board.currentSide() == Side::RED) ? "黑方胜!" : "红方胜!";
-        m_messageTime = SDL_GetTicks();
-        m_uiState = UIState::GAME_OVER;
+        enterGameOver();
         return false;
     }
 
@@ -779,6 +808,7 @@ void GUI::undoLastMove() {
     if (m_analysisMode) {
         m_engine.sendStopForRestart();  // 分析模式：重启前 stop
     } else if (m_engine.isThinking()) {
+        m_ignoreNextBestMove = true;
         m_engine.sendStop();
     }
 
@@ -1780,12 +1810,21 @@ void GUI::stopMoveTimerAndRecord(Side side) {
 // ========== 棋局编辑 ==========
 
 void GUI::enterEditMode() {
-    if (m_engine.isThinking()) m_engine.sendStop();
+    // 停止引擎并清理所有运行状态
+    if (m_engine.isThinking()) {
+        m_ignoreNextBestMove = true;
+        m_engine.sendStop();
+    }
+    m_analysisMode = false;
+    m_pvArrow1.valid = false;
+    m_pvArrow2.valid = false;
+    m_engineInfoText.clear();
     m_uiState = UIState::EDITING;
     m_editPiece = {};              // 默认选橡皮擦
     m_selRow = m_selCol = -1;
     m_legalMoves.clear();
     m_currentMoveStartTime = 0;   // 暂停计时
+    initButtons();
     m_message = "棋局编辑模式: 左键放置, 右键删除";
     m_messageTime = SDL_GetTicks();
 }
@@ -1920,11 +1959,14 @@ void GUI::exitEditMode() {
     m_uiState = UIState::NORMAL;
     m_editPiece = {};
     m_moveHistory.clear();
+    m_positionHistory.clear();
+    m_engineBannedMoves.clear();
     m_hasLastMove = false;
     m_viewIndex = -1;
     m_noCaptureCount = 0;
     m_redTimer = {};
     m_blackTimer = {};
+    m_ignoreNextBestMove = false;
     startMoveTimer();
     m_message = "编辑完成，" + std::string(m_editFirstSide == Side::RED ? "红" : "黑") + "方先行";
     m_messageTime = SDL_GetTicks();
