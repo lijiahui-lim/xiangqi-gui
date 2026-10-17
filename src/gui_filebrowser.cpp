@@ -14,13 +14,20 @@ void GUI::loadEngine(const std::string& path) {
     if (m_engine.start(path)) {
         m_settings.enginePath = path;
 
-        // 自动查找同目录下的 nnue 文件
-        fs::path engineDir = fs::path(path).parent_path().parent_path();
-        for (auto& entry : fs::directory_iterator(engineDir)) {
-            if (entry.path().extension() == ".nnue") {
-                m_settings.nnuePath = entry.path().string();
-                break;
-            }
+        // 自动查找 nnue：先引擎同目录，再逐级向上（兼容 皮卡鱼/Linux/ 这类
+        // 引擎在子目录、权重在父目录的布局）；目录不可读时跳过该级
+        for (fs::path dir = fs::path(path).parent_path(); !dir.empty(); dir = dir.parent_path()) {
+            bool found = false;
+            try {
+                for (auto& entry : fs::directory_iterator(dir)) {
+                    if (entry.path().extension() == ".nnue") {
+                        m_settings.nnuePath = entry.path().string();
+                        found = true;
+                        break;
+                    }
+                }
+            } catch (...) {}
+            if (found || dir == dir.parent_path()) break; // 找到或已到根目录
         }
 
         applyEngineSettings();
@@ -63,18 +70,24 @@ void GUI::fbNavigate(const std::string& dir) {
         for (auto& entry : fs::directory_iterator(dir)) {
             std::string name = entry.path().filename().string();
             if (name.empty() || name[0] == '.') continue; // 隐藏文件
-            if (entry.is_directory()) {
+            bool isDir = false;
+            try {
+                isDir = entry.is_directory();
+            } catch (...) { continue; } // 坏符号链接等：跳过单个条目而非整列失败
+            if (isDir) {
                 dirs.push_back(name + "/");
             } else {
                 // 只显示可执行文件和目录
-                auto perms = entry.status().permissions();
-                bool isExec = (perms & fs::perms::owner_exec) != fs::perms::none ||
-                              (perms & fs::perms::group_exec) != fs::perms::none ||
-                              (perms & fs::perms::others_exec) != fs::perms::none;
-                if (isExec || name.find("pikafish") != std::string::npos ||
-                    name.find("engine") != std::string::npos) {
-                    files.push_back(name);
-                }
+                try {
+                    auto perms = entry.status().permissions();
+                    bool isExec = (perms & fs::perms::owner_exec) != fs::perms::none ||
+                                  (perms & fs::perms::group_exec) != fs::perms::none ||
+                                  (perms & fs::perms::others_exec) != fs::perms::none;
+                    if (isExec || name.find("pikafish") != std::string::npos ||
+                        name.find("engine") != std::string::npos) {
+                        files.push_back(name);
+                    }
+                } catch (...) { continue; }
             }
         }
         std::sort(dirs.begin(), dirs.end());
@@ -96,9 +109,10 @@ void GUI::fbHandleClick(int x, int y) {
 
     int idx = m_renderer.fileBrowserHitTest(x, y, state);
     if (idx < 0) {
-        // 点击面板外关闭
-        int pw = std::min(m_windowW - 40, 600);
-        int ph = std::min(m_windowH - 40, 500);
+        // 点击面板外关闭（尺寸公式必须与 drawFileBrowser 一致，
+        // 否则宽窗口下面板两侧的内部点击会被误判为外部）
+        int pw = std::min(m_windowW - 40, std::max(600, m_windowW * 2 / 3));
+        int ph = std::min(m_windowH - 40, std::max(500, m_windowH * 3 / 4));
         int px = (m_windowW - pw) / 2;
         int py = (m_windowH - ph) / 2;
         if (x < px || x > px + pw || y < py || y > py + ph) {
@@ -107,6 +121,7 @@ void GUI::fbHandleClick(int x, int y) {
         return;
     }
 
+    m_fbSelected = idx;
     std::string entry = m_fbEntries[idx];
     if (entry == "../") {
         // 上级目录

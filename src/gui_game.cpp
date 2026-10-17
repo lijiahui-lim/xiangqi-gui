@@ -16,12 +16,15 @@ void GUI::newGame() {
     m_hasLastMove = false;
     m_moveHistory.clear();
     m_cloudMoves.clear();
+    m_cloudErrorText.clear();
     m_engineInfoText.clear();
     m_message.clear();
     m_viewIndex = -1;
     m_moveListScroll = 0;
     m_noCaptureCount = 0;
     m_positionHistory.clear();
+    // 初始局面也要计入重复检测，否则第一次回到开局局面会少算一次
+    m_positionHistory.push_back(m_board.toFEN());
     m_engineBannedMoves.clear();
     m_analysisMode = false;
     m_ignoreNextBestMove = false;
@@ -296,9 +299,11 @@ void GUI::undoLastMove() {
     // 查询云库
     queryCloudBook();
 
-    // 分析模式下重新分析
+    // 分析模式下重新分析；否则若轮到引擎（如引擎自战/悔奇数步）恢复走棋
     if (m_analysisMode) {
         startAnalysis();
+    } else {
+        tryStartEngineMove();
     }
 }
 

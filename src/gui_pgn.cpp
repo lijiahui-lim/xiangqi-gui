@@ -3,6 +3,7 @@
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
+#include <ctime>
 
 namespace fs = std::filesystem;
 
@@ -13,25 +14,27 @@ const Board& GUI::displayBoard() const {
     return m_board;
 }
 
+// m_viewIndex 语义: -1 = 实时局面; >=0 = 已走 viewIndex 步之后的局面
+// (0 = 初始局面, N = 第 N 步之后)
 void GUI::navigateTo(int index) {
     if (m_moveHistory.empty()) return;
 
-    if (index < 0) {
-        // 回到实时局面
+    if (index < 0 || index >= (int)m_moveHistory.size()) {
+        // 走出全部历史即回到实时局面
         m_viewIndex = -1;
     } else {
-        index = std::min(index, (int)m_moveHistory.size() - 1);
         m_viewIndex = index;
 
-        // 从初始局面重放到index
-        m_viewBoard.reset();
-        for (int i = 0; i <= index; i++) {
+        // 从开局 FEN 重放 index 步（必须用工整记录的 fenBefore，
+        // 不能用 reset() —— 编辑局面/导入 FEN 开局的对局会回放出错误盘面）
+        m_viewBoard.fromFEN(m_moveHistory.front().fenBefore);
+        for (int i = 0; i < index; i++) {
             auto& rec = m_moveHistory[i];
             m_viewBoard.makeMove(rec.move);
             m_viewBoard.switchSide();
         }
     }
-    
+
     // 分析模式下重新分析新位置
     if (m_analysisMode && m_engine.isRunning()) {
         startAnalysis();
@@ -41,22 +44,17 @@ void GUI::navigateTo(int index) {
 void GUI::navigateForward() {
     if (m_moveHistory.empty()) return;
     if (m_viewIndex < 0) return; // 已在实时局面
-    int nextIdx = m_viewIndex + 1;
-    if (nextIdx >= (int)m_moveHistory.size()) {
-        navigateTo(-1); // 回到实时
-    } else {
-        navigateTo(nextIdx);
-    }
+    navigateTo(m_viewIndex + 1); // 超出末尾自动回到实时
 }
 
 void GUI::navigateBackward() {
     if (m_moveHistory.empty()) return;
     if (m_viewIndex < 0) {
-        // 从实时回退到最后一步
+        // 从实时回退一步
         navigateTo((int)m_moveHistory.size() - 1);
         return;
     }
-    if (m_viewIndex == 0) return; // 已在最开始
+    if (m_viewIndex == 0) return; // 已在初始局面
     navigateTo(m_viewIndex - 1);
 }
 
@@ -69,8 +67,13 @@ void GUI::exportPGN(const std::string& path) {
     }
 
     // PGN 头
+    char dateBuf[16] = "";
+    {
+        std::time_t t = std::time(nullptr);
+        std::strftime(dateBuf, sizeof(dateBuf), "%Y.%m.%d", std::localtime(&t));
+    }
     ofs << "[Game \"Chinese Chess\"]\n";
-    ofs << "[Date \"" << __DATE__ << "\"]\n";
+    ofs << "[Date \"" << dateBuf << "\"]\n";
     ofs << "[Red \"Player\"]\n";
     ofs << "[Black \"Pikafish\"]\n";
     ofs << "[Result \"*\"]\n";
@@ -105,7 +108,13 @@ void GUI::importPGN(const std::string& path) {
         return;
     }
 
-    // 重置
+    // 重置（必须清空全部对局状态，否则残留数据污染规则判定/计时/界面状态）
+    // 引擎可能在为旧局面思考：停止并忽略其 bestmove，否则旧结果回来
+    // 会被应用到新棋局（恰好合法时就真走错棋了）
+    if (m_engine.isThinking()) {
+        m_ignoreNextBestMove = true;
+        m_engine.sendStop();
+    }
     m_board.reset();
     m_moveHistory.clear();
     m_selRow = m_selCol = -1;
@@ -113,6 +122,18 @@ void GUI::importPGN(const std::string& path) {
     m_hasLastMove = false;
     m_viewIndex = -1;
     m_moveListScroll = 0;
+    m_positionHistory.clear();
+    m_engineBannedMoves.clear();
+    m_noCaptureCount = 0;
+    m_cloudMoves.clear();
+    m_cloudErrorText.clear();
+    m_analysisMode = false;
+    m_engineInfoText.clear();
+    m_pvArrow1.valid = false;
+    m_pvArrow2.valid = false;
+    m_redTimer = {};
+    m_blackTimer = {};
+    m_uiState = UIState::NORMAL;
 
     std::string startFEN;
     std::string line;
@@ -167,11 +188,18 @@ void GUI::importPGN(const std::string& path) {
     if (!startFEN.empty()) {
         m_board.fromFEN(startFEN);
     }
+    // 起始局面计入重复检测
+    m_positionHistory.push_back(m_board.toFEN());
 
-    // 回放走法
+    // 回放走法（必须验证合法性：坐标合法但起点无子/非当前方/非法走法
+    // 会静默破坏棋盘并错位后续所有回放）
     for (auto& uci : moves) {
         Move move = Board::uciToMove(uci, m_board);
         if (move.fromRow < 0) break;
+        Piece p = m_board.get(move.fromRow, move.fromCol);
+        if (p.empty() || p.side != m_board.currentSide() ||
+            !m_board.isLegalMove(move.fromRow, move.fromCol, move.toRow, move.toCol))
+            break;
         move.captured = m_board.get(move.toRow, move.toCol);
 
         std::string chinese = uciToChineseNotation(uci, m_board);
@@ -181,6 +209,8 @@ void GUI::importPGN(const std::string& path) {
         m_board.makeMove(move);
         m_board.switchSide();
         m_positionHistory.push_back(m_board.toFEN());
+        if (!move.captured.empty()) m_noCaptureCount = 0;
+        else m_noCaptureCount++;
     }
 
     if (!m_moveHistory.empty()) {
@@ -188,24 +218,48 @@ void GUI::importPGN(const std::string& path) {
         m_hasLastMove = true;
     }
 
+    // 导入即新对局：重置引擎哈希；若轮到引擎走则开始走棋
+    if (m_engine.isRunning()) m_engine.sendNewGame();
+    tryStartEngineMove();
+
+    startMoveTimer();
     m_message = "已导入 " + std::to_string(m_moveHistory.size()) + " 步棋谱";
     m_messageTime = SDL_GetTicks();
 }
 
 void GUI::openPGNExportDialog() {
-    // 直接导出到当前目录
-    std::string path = "xiangqi_game.pgn";
-    exportPGN(path);
+    // 导出到当前目录，文件名带时间戳避免覆盖历史棋谱
+    char buf[40];
+    std::time_t t = std::time(nullptr);
+    std::strftime(buf, sizeof(buf), "xiangqi_%Y%m%d_%H%M%S.pgn", std::localtime(&t));
+    exportPGN(buf);
 }
 
 void GUI::openPGNImportDialog() {
-    // 使用文件浏览器（复用现有的，但用于PGN文件选择）
-    // 简化：直接从当前目录导入
-    std::string path = "xiangqi_game.pgn";
-    if (fs::exists(path)) {
-        importPGN(path);
+    // 导入当前目录中最新的 xiangqi_*.pgn（兼容旧固定文件名）
+    std::string best;
+    fs::file_time_type bestTime{};
+    try {
+        for (auto& e : fs::directory_iterator(".")) {
+            std::string name = e.path().filename().string();
+            if (name.rfind("xiangqi_", 0) == 0 && e.path().extension() == ".pgn") {
+                try {
+                    auto t = e.last_write_time();
+                    if (best.empty() || t > bestTime) {
+                        best = name;
+                        bestTime = t;
+                    }
+                } catch (...) { continue; } // 单个文件异常不应中断整个扫描
+            }
+        }
+    } catch (...) {}
+    if (best.empty() && fs::exists("xiangqi_game.pgn"))
+        best = "xiangqi_game.pgn";
+
+    if (!best.empty()) {
+        importPGN(best);
     } else {
-        m_message = "未找到 xiangqi_game.pgn";
+        m_message = "未找到棋谱文件 (xiangqi_*.pgn)";
         m_messageTime = SDL_GetTicks();
     }
 }
@@ -253,7 +307,11 @@ void GUI::enterEditMode() {
     m_pvArrow1.valid = false;
     m_pvArrow2.valid = false;
     m_engineInfoText.clear();
+    m_cloudMoves.clear();
+    m_cloudErrorText.clear();
     m_uiState = UIState::EDITING;
+    m_viewIndex = -1;              // 浏览历史时点编辑：落子改的是 m_board，
+                                 // 必须退出浏览态否则编辑完全不可见
     m_editPiece = {};              // 默认选橡皮擦
     m_selRow = m_selCol = -1;
     m_legalMoves.clear();
@@ -394,6 +452,8 @@ void GUI::exitEditMode() {
     m_editPiece = {};
     m_moveHistory.clear();
     m_positionHistory.clear();
+    // 编辑后的起始局面计入重复检测
+    m_positionHistory.push_back(m_board.toFEN());
     m_engineBannedMoves.clear();
     m_hasLastMove = false;
     m_viewIndex = -1;
@@ -401,6 +461,8 @@ void GUI::exitEditMode() {
     m_redTimer = {};
     m_blackTimer = {};
     m_ignoreNextBestMove = false;
+    m_cloudMoves.clear();
+    m_cloudErrorText.clear();
     startMoveTimer();
     m_message = "编辑完成，" + std::string(m_editFirstSide == Side::RED ? "红" : "黑") + "方先行";
     m_messageTime = SDL_GetTicks();

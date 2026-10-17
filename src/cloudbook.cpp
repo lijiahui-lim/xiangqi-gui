@@ -2,7 +2,6 @@
 #include <curl/curl.h>
 #include <sstream>
 #include <cstring>
-#include <algorithm>
 
 CloudBook::CloudBook() {}
 
@@ -18,52 +17,9 @@ static size_t writeCallback(void* contents, size_t size, size_t nmemb, void* use
     return size * nmemb;
 }
 
-// 简单JSON解析辅助 (避免引入大型JSON库)
-static std::string extractJsonString(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos) return "";
-    pos = json.find(':', pos);
-    if (pos == std::string::npos) return "";
-    pos++;
-    while (pos < json.size() && json[pos] == ' ') pos++;
-    if (pos < json.size() && json[pos] == '"') {
-        pos++;
-        auto end = json.find('"', pos);
-        if (end != std::string::npos) return json.substr(pos, end - pos);
-    }
-    // 数字值
-    auto end = json.find_first_of(",}]", pos);
-    if (end != std::string::npos) {
-        std::string val = json.substr(pos, end - pos);
-        // 去掉空格
-        val.erase(std::remove(val.begin(), val.end(), ' '), val.end());
-        return val;
-    }
-    return "";
-}
-
-static std::vector<std::string> splitJsonArray(const std::string& json) {
-    std::vector<std::string> items;
-    int depth = 0;
-    size_t start = 0;
-    bool inArray = false;
-
-    for (size_t i = 0; i < json.size(); i++) {
-        if (json[i] == '[' && !inArray) { inArray = true; start = i + 1; continue; }
-        if (!inArray) continue;
-        if (json[i] == '{') {
-            if (depth == 0) start = i;
-            depth++;
-        }
-        if (json[i] == '}') {
-            depth--;
-            if (depth == 0)
-                items.push_back(json.substr(start, i - start + 1));
-        }
-        if (json[i] == ']' && depth == 0) break;
-    }
-    return items;
+// curl 进度回调：返回非 0 中断传输（用于真正的取消）
+static int progressCallback(void* userp, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    return static_cast<std::atomic<bool>*>(userp)->load() ? 1 : 0;
 }
 
 void CloudBook::query(const std::string& fen, Callback cb) {
@@ -96,6 +52,10 @@ void CloudBook::query(const std::string& fen, Callback cb) {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "XiangqiGUI/1.0");
+        // 让 m_cancel 能真正中断传输，否则 cancelQuery 的 join 会阻塞至超时
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &m_cancel);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
 
         CURLcode res = curl_easy_perform(curl);
         curl_easy_cleanup(curl);

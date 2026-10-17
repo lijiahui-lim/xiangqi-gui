@@ -33,7 +33,7 @@ std::string GUI::detectNNUEPath() {
 }
 
 std::string GUI::configFilePath() const {
-    // 配置文件放在可执行文件同目录
+    // 配置文件在当前工作目录
     return "xiangqi.ini";
 }
 
@@ -207,12 +207,10 @@ void GUI::run() {
     bool needRedraw = true;
 
     while (m_running) {
-        bool hasEvent = false;
         if (m_engine.isThinking()) {
             // 引擎思考中：~20fps 刷新显示分析信息
             while (SDL_PollEvent(&ev)) {
                 handleEvent(ev);
-                hasEvent = true;
             }
             needRedraw = true;
             SDL_Delay(50);
@@ -221,7 +219,6 @@ void GUI::run() {
             bool gotEvent = SDL_WaitEventTimeout(&ev, 200) != 0;
             if (gotEvent) {
                 handleEvent(ev);
-                hasEvent = true;
                 while (SDL_PollEvent(&ev))
                     handleEvent(ev);
                 needRedraw = true;
@@ -231,10 +228,10 @@ void GUI::run() {
                 needRedraw = true;
         }
 
+        bool hadMessage = !m_message.empty();
         update();
-
-        // 消息超时清除需要重绘
-        if (m_message.empty() && !m_engineInfoText.empty())
+        // 消息刚被超时清除时需要重绘以擦掉弹窗
+        if (hadMessage && m_message.empty())
             needRedraw = true;
 
         if (needRedraw) {
@@ -253,13 +250,11 @@ void GUI::render() {
     m_renderer.drawBoard(dispBoard, m_settings.flipBoard, m_settings.mirrorBoard);
 
     // 上一步高亮
-    if (m_hasLastMove) {
-        if (m_viewIndex >= 0) {
-            // 浏览模式：高亮当前浏览步
-            m_renderer.drawLastMove(m_moveHistory[m_viewIndex].move, m_settings.flipBoard, m_settings.mirrorBoard);
-        } else {
-            m_renderer.drawLastMove(m_lastMove, m_settings.flipBoard, m_settings.mirrorBoard);
-        }
+    if (m_viewIndex > 0) {
+        // 浏览模式：高亮当前浏览步（viewIndex = 已走步数，最后一步是 viewIndex-1）
+        m_renderer.drawLastMove(m_moveHistory[m_viewIndex - 1].move, m_settings.flipBoard, m_settings.mirrorBoard);
+    } else if (m_viewIndex < 0 && m_hasLastMove) {
+        m_renderer.drawLastMove(m_lastMove, m_settings.flipBoard, m_settings.mirrorBoard);
     }
 
     // 选中与合法走法（非浏览模式下）
@@ -302,7 +297,7 @@ void GUI::render() {
                 e.blackMove = m_moveHistory[i + 1].chinese;
             entries.push_back(e);
         }
-        int hl = m_viewIndex >= 0 ? m_viewIndex : (m_moveHistory.empty() ? -1 : (int)m_moveHistory.size() - 1);
+        int hl = m_viewIndex >= 0 ? m_viewIndex - 1 : (m_moveHistory.empty() ? -1 : (int)m_moveHistory.size() - 1);
         m_renderer.drawMoveList(entries, m_moveListScroll, hl, lay.moveListTop, lay.moveListHeight);
     }
 
@@ -351,10 +346,11 @@ void GUI::render() {
 
 void GUI::queryCloudBook() {
     if (!m_settings.useCloudBook || !m_cloudBook.isEnabled()) return;
-    m_cloudBook.query(m_board.toFEN(), [](const std::vector<CloudBookMove>& moves, const std::string& error) {
+    std::string fen = m_board.toFEN();
+    m_cloudBook.query(fen, [fen](const std::vector<CloudBookMove>& moves, const std::string& error) {
         SDL_Event ev{};
         ev.type = SDL_USEREVENT; ev.user.code = 3;
-        ev.user.data1 = new CloudBookEventData{moves, error};
+        ev.user.data1 = new CloudBookEventData{moves, error, fen};
         if (SDL_PushEvent(&ev) < 1) delete (CloudBookEventData*)ev.user.data1;
     });
 }

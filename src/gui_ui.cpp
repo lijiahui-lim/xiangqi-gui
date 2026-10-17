@@ -9,6 +9,55 @@ void GUI::handleMouseDown(int x, int y) {
         return;
     }
 
+    // 编辑模式：按钮未绘制，绝不能先命中按钮热区（否则点"新局"位置会重置棋盘）
+    if (m_uiState == UIState::EDITING) {
+        // 先检查编辑面板点击
+        int hit = editPaletteHitTest(x, y);
+        if (hit >= 0) {
+            if (hit <= 13) {
+                // 选择棋子
+                Side s = (hit < 7) ? Side::RED : Side::BLACK;
+                m_editPiece.type = kPaletteOrder[hit < 7 ? hit : hit - 7];
+                m_editPiece.side = s;
+                return;
+            } else if (hit == 14) {
+                m_editPiece = {};  // 橡皮擦
+                return;
+            } else if (hit == 15) {
+                // 清空棋盘
+                for (int r = 0; r < Board::ROWS; r++)
+                    for (int c = 0; c < Board::COLS; c++)
+                        m_board.set(r, c, Piece{});
+                return;
+            } else if (hit == 16) {
+                // 还原初始局面
+                m_board.reset();
+                return;
+            } else if (hit == 17) {
+                exitEditMode();
+                return;
+            } else if (hit == 18) {
+                m_editFirstSide = Side::RED;
+                return;
+            } else if (hit == 19) {
+                m_editFirstSide = Side::BLACK;
+                return;
+            }
+        }
+        // 棋盘点击：放置棋子
+        int row, col;
+        if (m_renderer.screenToBoard(x, y, row, col, m_settings.flipBoard, m_settings.mirrorBoard)) {
+            handleEditBoardClick(row, col, false);
+        }
+        return;
+    }
+
+    // 设置面板遮罩下按钮不可见也不可点击；点击任意处关闭设置
+    if (m_uiState == UIState::SETTINGS) {
+        m_uiState = UIState::NORMAL;
+        return;
+    }
+
     // 检查按钮
     int btnIdx = hitButton(x, y);
     if (btnIdx >= 0) {
@@ -157,67 +206,22 @@ void GUI::handleMouseDown(int x, int y) {
         return;
     }
 
-    // 编辑模式
-    if (m_uiState == UIState::EDITING) {
-        // 先检查编辑面板点击
-        int hit = editPaletteHitTest(x, y);
-        if (hit >= 0) {
-            if (hit <= 13) {
-                // 选择棋子
-                Side s = (hit < 7) ? Side::RED : Side::BLACK;
-                m_editPiece.type = kPaletteOrder[hit < 7 ? hit : hit - 7];
-                m_editPiece.side = s;
-                return;
-            } else if (hit == 14) {
-                m_editPiece = {};  // 橡皮擦
-                return;
-            } else if (hit == 15) {
-                // 清空棋盘
-                for (int r = 0; r < Board::ROWS; r++)
-                    for (int c = 0; c < Board::COLS; c++)
-                        m_board.set(r, c, Piece{});
-                return;
-            } else if (hit == 16) {
-                // 还原初始局面
-                m_board.reset();
-                return;
-            } else if (hit == 17) {
-                exitEditMode();
-                return;
-            } else if (hit == 18) {
-                m_editFirstSide = Side::RED;
-                return;
-            } else if (hit == 19) {
-                m_editFirstSide = Side::BLACK;
-                return;
-            }
-        }
-        // 棋盘点击：放置棋子
-        int row, col;
-        if (m_renderer.screenToBoard(x, y, row, col, m_settings.flipBoard, m_settings.mirrorBoard)) {
-            handleEditBoardClick(row, col, false);
-        }
-        return;
-    }
-
-    // 设置面板下不响应棋盘点击
-    if (m_uiState == UIState::SETTINGS) {
-        m_uiState = UIState::NORMAL;
-        return;
-    }
-
-    // 引擎思考中不允许操作棋盘（分析模式除外）
-    if (m_engine.isThinking() && !m_analysisMode) return;
-
-    // 棋谱点击（浏览历史时也允许点击跳转）
+    // 棋谱点击（浏览历史/引擎思考/终局时都允许点击跳转；viewIndex 语义为
+    // "已走 N 步"，点击第 moveIdx 步应显示走完该步的局面 → moveIdx+1）
     int moveIdx = moveListHitTest(x, y);
     if (moveIdx >= 0 && moveIdx < (int)m_moveHistory.size()) {
-        navigateTo(moveIdx);
+        navigateTo(moveIdx + 1);
         return;
     }
 
     // 浏览历史时不允许操作棋盘
     if (isViewingHistory()) return;
+
+    // 终局后不能再走子（可用悔棋/导航回看）
+    if (m_uiState == UIState::GAME_OVER) return;
+
+    // 引擎思考中不允许操作棋盘（分析模式除外）
+    if (m_engine.isThinking() && !m_analysisMode) return;
 
     // 棋盘点击
     int row, col;
@@ -284,6 +288,16 @@ void GUI::handleKeyDown(SDL_Keycode key) {
         case SDLK_c:
             m_settings.useCloudBook = !m_settings.useCloudBook;
             m_cloudBook.setEnabled(m_settings.useCloudBook);
+            initButtons(); // 同步 ★云库 按钮文字
+            if (m_settings.useCloudBook) {
+                queryCloudBook();
+                m_message = "云库已开启";
+            } else {
+                m_message = "云库已关闭";
+                m_cloudMoves.clear();
+                m_cloudErrorText.clear();
+            }
+            m_messageTime = SDL_GetTicks();
             break;
         case SDLK_ESCAPE:
             if (m_uiState == UIState::SETTINGS || m_uiState == UIState::FILE_BROWSER)
@@ -385,7 +399,7 @@ void GUI::handleEvent(SDL_Event& ev) {
                 delete info;
             } else if (ev.user.code == 3 && ev.user.data1) {
                 auto* cbd = (CloudBookEventData*)ev.user.data1;
-                onCloudBookResult(cbd->moves, cbd->error);
+                onCloudBookResult(cbd->moves, cbd->error, cbd->fen);
                 delete cbd;
             }
             break;

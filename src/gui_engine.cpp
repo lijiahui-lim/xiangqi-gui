@@ -5,12 +5,8 @@
 void GUI::applyEngineSettings() {
     if (!m_engine.isRunning()) return;
 
-    // 等待引擎就绪
-    int wait = 0;
-    while (!m_engine.isReady() && wait < 50) {
-        SDL_Delay(100);
-        wait++;
-    }
+    // 不必忙等 readyok：引擎串行处理 stdin 命令，setoption 直接排进队列即可，
+    // 原实现最长阻塞 UI 5 秒
 
     m_engine.sendSetOption("Threads", std::to_string(m_settings.threads));
     m_engine.sendSetOption("Hash", std::to_string(m_settings.hashSize));
@@ -91,10 +87,9 @@ void GUI::startEngineMove() {
         }
     }
 
-    if (m_settings.searchTime > 0)
-        m_engine.sendGo(0, m_settings.searchTime, 0, 0, searchmoves);
-    else
-        m_engine.sendGo(m_settings.searchDepth, 0, 0, 0, searchmoves);
+    // depth 和 movetime 同时下发（UCI 允许组合限制，先到先停），
+    // 否则配置钳制使 searchTime 恒 >0，搜索深度设置永远不生效
+    m_engine.sendGo(m_settings.searchDepth, m_settings.searchTime, 0, 0, searchmoves);
 }
 
 bool GUI::isEngineTurn() const {
@@ -124,7 +119,7 @@ void GUI::startAnalysis() {
 
     // 构造走法列表（仅包含当前浏览位置前的走法）
     std::vector<std::string> uciMoves;
-    size_t moveLimit = (m_viewIndex >= 0) ? m_viewIndex + 1 : m_moveHistory.size();
+    size_t moveLimit = (m_viewIndex >= 0) ? (size_t)m_viewIndex : m_moveHistory.size();
     for (size_t i = 0; i < moveLimit && i < m_moveHistory.size(); i++)
         uciMoves.push_back(Board::moveToUCI(m_moveHistory[i].move));
 
@@ -198,9 +193,11 @@ void GUI::onEngineBestMove(const std::string& uci) {
     Move move = Board::uciToMove(uci, m_board);
     if (move.fromRow < 0) return;
 
-    // 验证走法
+    // 验证走法：必须有当前方棋子，且是真正的合法走法
+    // （否则如 "h2h2" 会抹掉棋子、吃己方棋子会破坏棋盘）
     Piece p = m_board.get(move.fromRow, move.fromCol);
     if (p.empty() || p.side != m_board.currentSide()) return;
+    if (!m_board.isLegalMove(move.fromRow, move.fromCol, move.toRow, move.toCol)) return;
 
     // 记录本步用时
     stopMoveTimerAndRecord(m_board.currentSide());
@@ -349,7 +346,8 @@ std::string GUI::pvToReadable(const std::string& pv) const {
     return result;
 }
 
-void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error) {
+void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error,
+                            const std::string& fen) {
     if (!error.empty()) {
         m_cloudErrorText = error;
         m_cloudMoves.clear();
@@ -357,8 +355,11 @@ void GUI::onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::
     }
     m_cloudMoves = moves;
     m_cloudErrorText.clear();
-    // 把UCI走法转换为中文记法存入note字段（主线程安全访问 m_board）
+    // 把UCI走法转换为中文记法存入note字段
+    // 必须用查询时的局面：结果返回期间盘面可能已变化
+    Board queryBoard;
+    queryBoard.fromFEN(fen);
     for (auto& cm : m_cloudMoves) {
-        cm.note = uciToChineseNotation(cm.move, m_board);
+        cm.note = uciToChineseNotation(cm.move, queryBoard);
     }
 }

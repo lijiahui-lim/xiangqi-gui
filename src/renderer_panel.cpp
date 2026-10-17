@@ -244,6 +244,10 @@ int Renderer::fileBrowserHitTest(int x, int y, const FileBrowserState& state) co
         return -1;
 
     int idx = (y - listTop) / itemH + state.scrollOffset;
+    // 绘制循环只画 scrollOffset .. scrollOffset+maxVisible-1 共 maxVisible 项；
+    // listH 不整除 itemH 时底部余量条带没有条目，命中它会选中不可见项
+    int maxVisible = (ph - 70) / itemH; // 与 drawFileBrowser 的 listH/itemH 一致
+    if (idx >= state.scrollOffset + maxVisible) return -1;
     if (idx >= 0 && idx < (int)state.entries.size())
         return idx;
     return -1;

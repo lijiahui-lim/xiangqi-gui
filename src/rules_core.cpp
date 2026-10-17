@@ -44,9 +44,8 @@ const char* kDefaultRuleScript = R"RULES(# 中国象棋规则脚本
 #   win "消息" — 当前方胜
 #   warn "消息" — 显示提示
 
-rule "循环长将警告"
-when in_check and perpetual_check_count >= 2
-action warn "循环长将! 请变招!"
+# 终局规则必须排在 warn 规则之前（evaluate 返回首个匹配的规则，
+# warn 在前会把同时成立的将死/困毙/和棋判定遮蔽掉）
 
 rule "被将军必须应将"
 when in_check and (not has_legal_moves)
@@ -63,6 +62,10 @@ action draw
 rule "60步不吃子和棋"
 when no_capture_count >= 120
 action draw
+
+rule "循环长将警告"
+when in_check and perpetual_check_count >= 2
+action warn "循环长将! 请变招!"
 
 rule "将军提示"
 when in_check and has_legal_moves
@@ -157,6 +160,13 @@ std::vector<ParsedRule> RuleEngine::parseFile(const std::string& content) {
 
     while (std::getline(iss, line)) {
         std::string t = trim(line);
+        // 行内注释：剥掉引号外 '#' 之后的内容。条件解析要求表达式被完整
+        // 消费（fail-closed），"when ... # 注释" 会残留 token 被判语法错误
+        bool inQ = false;
+        for (size_t i = 0; i < t.size(); i++) {
+            if (t[i] == '"') inQ = !inQ;
+            else if (t[i] == '#' && !inQ) { t = trim(t.substr(0, i)); break; }
+        }
         if (t.empty() || t[0] == '#') continue;
 
         if (startsWith(t, "rule ")) {
@@ -183,6 +193,14 @@ CondNode RuleEngine::parseCondition(const std::string& expr) const {
     auto t = tokenize(expr);
     size_t p = 0;
     CondNode node = pOr(t, p);
+    // 表达式必须被完整消费：残留 token 说明有语法错误（如 "a = b"、"a b"），
+    // 此时 fail-closed（条件恒不成立），避免部分解析导致规则误触发
+    if (p >= t.size() || t[p].type != Tok::END) {
+        CondNode bad;
+        bad.type = CondNode::BOOL_LIT;
+        bad.bval = false;
+        return bad;
+    }
     return node;
 }
 

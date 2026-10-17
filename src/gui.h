@@ -46,6 +46,7 @@ struct GameSettings {
 struct CloudBookEventData {
     std::vector<CloudBookMove> moves;
     std::string error;
+    std::string fen;  // 查询时的局面（结果回来时时局面可能已变，记谱转换须用此FEN）
 };
 
 // 编辑面板棋子顺序（索引 0-6 红，7-13 黑）
@@ -81,7 +82,8 @@ private:
     void toggleAnalysisMode();    // 切换分析模式
     void onEngineBestMove(const std::string& uci);
     void onEngineInfo(const EngineInfo& info);
-    void onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error);
+    void onCloudBookResult(const std::vector<CloudBookMove>& moves, const std::string& error,
+                           const std::string& fen);
     void undoLastMove();
     bool isEngineTurn() const;
 
@@ -159,7 +161,7 @@ private:
     bool checkGameRules();
 
     // 棋谱浏览
-    int m_viewIndex = -1;       // -1 = 实时局面, >=0 = 浏览历史第N步后的局面
+    int m_viewIndex = -1;       // -1 = 实时局面, >=0 = 已走N步后的局面 (0=初始局面)
     int m_moveListScroll = 0;   // 棋谱列表滚动偏移
     Board m_viewBoard;          // 浏览模式下显示的棋盘
 

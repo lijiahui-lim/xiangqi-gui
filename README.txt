@@ -82,8 +82,8 @@ Ubuntu / Debian 安装依赖：
 -----------------------
   engine_path       引擎可执行文件路径
   nnue_path         NNUE 权重文件路径
-  search_depth      搜索深度（默认 15）
-  search_time       搜索时间毫秒（默认 3000）
+  search_depth      搜索深度（默认 18）
+  search_time       搜索时间毫秒（默认 5000）
   threads           引擎线程数（默认 1）
   hash_size         哈希表 MB（默认 128）
   use_cloud_book    是否使用云库（0/1）

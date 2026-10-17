@@ -73,6 +73,7 @@ std::pair<int,int> Board::findKing(Side s) const {
 bool Board::kingsOpposing() const {
     auto [rr, rc] = findKing(Side::RED);
     auto [br, bc] = findKing(Side::BLACK);
+    if (rr < 0 || br < 0) return false; // 王缺失（编辑中）不算对脸
     if (rc != bc) return false;
     // 检查两王之间是否有棋子
     int minR = std::min(rr, br), maxR = std::max(rr, br);

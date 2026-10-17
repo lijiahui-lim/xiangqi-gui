@@ -8,7 +8,6 @@
 #   in_check, has_legal_moves, no_capture_count, move_count, current_side, last_captured
 #   perpetual_check_count       — 连续将军循环中局面重复次数
 #   position_repeat_count       — 当前局面总重复次数（含当前）
-#   check_capture_cycle_count   — 一将一捉无根子循环次数
 #
 # 动作:
 #   checkmate  — 被将死/困毙
@@ -16,10 +15,9 @@
 #   lose       — 当前方负
 #   win "消息" — 当前方胜
 #   warn "消息" — 显示提示
-
-rule "循环长将警告"
-when in_check and perpetual_check_count >= 2
-action warn "循环长将! 请变招!"
+#
+# 注意: evaluate 返回首个匹配的规则，终局规则必须排在 warn 规则之前，
+# 否则 warn 会遮蔽同时成立的将死/困毙/和棋判定。
 
 rule "被将军必须应将"
 when in_check and (not has_legal_moves)
@@ -36,6 +34,10 @@ action draw
 rule "60步不吃子和棋"
 when no_capture_count >= 120
 action draw
+
+rule "循环长将警告"
+when in_check and perpetual_check_count >= 2
+action warn "循环长将! 请变招!"
 
 rule "将军提示"
 when in_check and has_legal_moves
